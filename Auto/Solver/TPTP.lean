@@ -1,5 +1,6 @@
 import Lean
 import Auto.IR.TPTP_TH0
+import Auto.IR.TPTP_FOF
 import Auto.Parser.TPTP
 import Auto.Embedding.LamBase
 open Lean

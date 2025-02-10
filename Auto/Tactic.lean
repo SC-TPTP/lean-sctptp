@@ -261,7 +261,10 @@ def queryTPTP (exportFacts : Array REntry) : LamReif.ReifM (Option Expr × Optio
     match re with
     | .valid [] t => return t
     | _ => throwError "{decl_name%} :: Unexpected error")
-  let query ← lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
   trace[auto.tptp.printQuery] "\n{query}"
   let (proven, tptpProof) ← Solver.TPTP.querySolver query
   if !proven then

@@ -7,11 +7,11 @@ open Embedding.Lam
 def transPropConst : PropConst → String
 | .trueE      => "$true"
 | .falseE     => "$false"
-| .not        => "(~)"
-| .and        => "(&)"
-| .or         => "(|)"
-| .imp        => "(=>)"
-| .iff        => "(<=>)"
+| .not        => "~"
+| .and        => "&"
+| .or         => "|"
+| .imp        => "=>"
+| .iff        => "<=>"
 
 def transBoolConst : BoolConst → String
 | .ofProp     => "(identity)"
@@ -51,7 +51,15 @@ def transLamBaseTerm : LamBaseTerm → Except String String
 | .existE _   => .ok "($false)"
 | .ite _      => .ok "($ite)"
 
-def isBiapp : LamBaseTerm → Bool
+def isStdUnAppOp : LamBaseTerm → Bool
+| .not => true
+| _    => false
+
+def stdUnAppOpStr : LamBaseTerm → String
+| .not => "~"
+| _    => ""
+
+def isStdBiAppOp : LamBaseTerm → Bool
 | .eq _ => true
 | .pcst .and => true
 | .pcst .or => true
@@ -59,7 +67,7 @@ def isBiapp : LamBaseTerm → Bool
 | .pcst .iff => true
 | _ => false
 
-def biappOp : LamBaseTerm → String
+def stdBiAppOpStr : LamBaseTerm → String
 | .eq _ => "="
 | .pcst .and => "&"
 | .pcst .or => "|"
@@ -79,19 +87,23 @@ partial def transLamTerm (t : LamTerm) (lctx := 0) : Except String String :=
     else
       match t₁ with
       | .app _ (.base b₁) t₁₂ =>
-        if isBiapp b₁ then
+        if isStdBiAppOp b₁ then
           match transLamTerm t₁₂ lctx, transLamTerm t₂ lctx with
-          | .ok t₁s, .ok t₂s => .ok s!"({t₁s} {biappOp b₁} {t₂s})"
+          | .ok t₁s, .ok t₂s => .ok s!"({t₁s} {stdBiAppOpStr b₁} {t₂s})"
           | .error e, _ => .error e
           | .ok _, .error e => .error e
+        else if isStdUnAppOp b₁ then
+          match transLamTerm t₂ lctx with
+          | .ok t₂s => .ok s!"{stdUnAppOpStr b₁}({t₂s})"
+          | .error e => .error e
         else
           match transLamTerm t₁ lctx, transLamTerm t₂ lctx with
-          | .ok t₁s, .ok t₂s => .ok s!"({t₁s} @ {t₂s})"
+          | .ok t₁s, .ok t₂s => .ok s!"app({t₁s}, {t₂s})"
           | .error e, _ => .error e
           | .ok _, .error e => .error e
       | _ =>
         match transLamTerm t₁ lctx, transLamTerm t₂ lctx with
-        | .ok t₁s, .ok t₂s => .ok s!"({t₁s} @ {t₂s})"
+        | .ok t₁s, .ok t₂s => .ok s!"app({t₁s}, {t₂s})"
         | .error e, _ => .error e
         | .ok _, .error e => .error e
   | .base b      => transLamBaseTerm b

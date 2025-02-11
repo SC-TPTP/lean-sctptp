@@ -54,6 +54,7 @@ inductive SolverName where
   -- E prover, higher-order version
   | eproverHo
   | vampire
+  | egg
 deriving BEq, Hashable, Inhabited, Repr
 
 instance : ToString SolverName where
@@ -65,6 +66,7 @@ instance : ToString SolverName where
     | .lams => "zeport-lams"
   | .eproverHo => "eprover-ho"
   | .vampire => "vampire"
+  | .egg => "egg"
 
 instance : Lean.KVMap.Value SolverName where
   toDataValue n := toString n
@@ -74,6 +76,7 @@ instance : Lean.KVMap.Value SolverName where
   | "zeport-lams" => some (.zeport .lams)
   | "eprover-ho" => some .eproverHo
   | "vampire" => some .vampire
+  | "egg" => some .egg
   | _ => none
 
 end Auto.Solver.TPTP
@@ -102,6 +105,11 @@ register_option auto.tptp.eproverHo.path : String := {
 register_option auto.tptp.vampire.path : String := {
   defValue := "vampire"
   descr := "Path to vampire prover"
+}
+
+register_option auto.tptp.egg.path : String := {
+  defValue := "egg"
+  descr := "Path to egg prover"
 }
 
 namespace Auto.Solver.TPTP
@@ -186,6 +194,21 @@ def queryVampire (query : String) : MetaM (Bool × String) := do
   let proven := (stdout.splitOn "Refutation found. Thanks to Tanya!").length >= 2
   return (proven, stdout)
 
+def queryEgg (query : String) : MetaM (Bool × String) := do
+  let path := auto.tptp.egg.path.get (← getOptions)
+  -- write query to a file
+  IO.FS.withFile "./.egg_problem.p" .writeNew (fun stream => stream.putStr query)
+  IO.FS.withFile "./.egg_problem_sol.p" .writeNew (fun stream => stream.putStr "")
+  let solver ← createAux path #["./.egg_problem.p", "./.egg_problem_sol.p"]
+  let stdout ← solver.stdout.readToEnd
+  let stderr ← solver.stderr.readToEnd
+  trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
+  solver.kill
+  let proven := (stdout.splitOn "SZS status Unsatisfiable").length >= 2
+  IO.FS.removeFile "./.egg_problem.p"
+  IO.FS.removeFile "./.egg_problem_sol.p"
+  return (proven, stdout)
+
 def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   if !(auto.tptp.get (← getOptions)) then
     throwError "{decl_name%} :: Unexpected error"
@@ -194,7 +217,8 @@ def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := 
     | .zipperposition => queryZipperposition query
     | .zeport zept    => queryZEPort zept query
     | .eproverHo      => queryE query
-    | .vampire        => queryVampire query)
+    | .vampire        => queryVampire query
+    | .egg            => queryEgg query)
   return (proven, ← Parser.TPTP.parse stdout)
 
 end Solver.TPTP

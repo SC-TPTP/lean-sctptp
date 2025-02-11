@@ -24,6 +24,7 @@ syntax defeqs := "d[" ident,* "]"
 syntax uord := atomic(unfolds) <|> defeqs
 syntax autoinstr := ("👍" <|> "👎")?
 syntax (name := auto) "auto" autoinstr hints (uord)* : tactic
+syntax (name := egg) "egg" autoinstr hints (uord)* : tactic
 syntax (name := mononative) "mononative" hints (uord)* : tactic
 syntax (name := intromono) "intromono" hints (uord)* : tactic
 
@@ -537,6 +538,69 @@ def evalIntromono : Tactic
     let (lemmas, _) ← collectAllLemmas hints uords (goalBinders.push ngoal)
     let newMid ← Monomorphization.intromono lemmas absurd
     replaceMainGoal [newMid]
+| _ => throwUnsupportedSyntax
+
+/--
+  Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
+-/
+def runEgg
+  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM Expr :=
+  Meta.withDefault do
+    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
+    -- trace[auto.tactic] "Conclusion: {conclusion}"
+    -- let lemmas := lemmas.push conclusion
+    let lemmas ← rewriteIteCondDecide lemmas
+    let (proof, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM Expr) do
+      let s ← get
+      let u ← computeMaxLevel s.facts
+      (reifMAction s.facts s.inhTys s.inds).run' {u := u})
+    trace[auto.tactic] "Egg found proof of {← Meta.inferType proof}"
+    trace[auto.tactic.printProof] "{proof}"
+    return proof
+where
+  reifMAction
+    (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
+    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM Expr := do
+    let exportFacts ← LamReif.reifFacts uvalids
+    let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
+    let _ ← LamReif.reifInhabitations uinhs
+    let exportInds ← LamReif.reifMutInds minds
+    LamReif.printValuation
+    -- **Preprocessing in Verified Checker**
+    let (exportFacts', _) ← LamReif.preprocess exportFacts exportInds
+    exportFacts := exportFacts'
+    -- **TPTP invocation and Premise Selection**
+    if auto.tptp.get (← getOptions) then
+      let (proof, unsatCore) ← queryTPTP exportFacts
+      if let .some proof := proof then
+        return proof
+      let premiseSel? := auto.tptp.premiseSelection.get (← getOptions)
+      if premiseSel? then
+        if let .some unsatCore := unsatCore then
+          exportFacts := unsatCore
+    throwError "Egg failed to find proof"
+
+@[tactic egg]
+def evalEgg : Tactic
+| `(egg | egg $instr $hints $[$uords]*) => withMainContext do
+  -- Suppose the goal is `∀ (x₁ x₂ ⋯ xₙ), G`
+  -- First, apply `intros` to put `x₁ x₂ ⋯ xₙ` into the local context,
+  --   now the goal is just `G`
+  let (goalBinders, newGoal) ← (← getMainGoal).intros
+  let [nngoal] ← newGoal.apply (.const ``Classical.byContradiction [])
+    | throwError "{decl_name%} :: Unexpected result after applying Classical.byContradiction"
+  let (ngoal, absurd) ← MVarId.intro1 nngoal
+  replaceMainGoal [absurd]
+  withMainContext do
+    let instr ← parseInstr instr
+    match instr with
+    | .none =>
+      let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push ngoal)
+      let proof ← runEgg lemmas inhFacts
+      newGoal.assign proof
+    | .useSorry =>
+      let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
+      newGoal.assign proof
 | _ => throwUnsupportedSyntax
 
 /--

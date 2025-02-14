@@ -1,5 +1,8 @@
 import Lean
 import Auto.Embedding.LamBVarOp
+import Std.Data.HashMap
+
+open Lean.Meta
 open Lean
 
 namespace Auto.Parser.TPTP
@@ -30,7 +33,7 @@ deriving Repr
 
 def tokens := [
   "@", "|", "&", "<=>", "=>", "<=", "<~>", "~|", "~&", ">", "=", "!=", "!!", "??",
-  "~", ",", "(", ")", "*", "!", "?", "^", ":", "[", "]", "!>", ".", "*"
+  "~", ",", "(", ")", "*", "!", "?", "^", ":", "[", "]", "!>", ".", "*", "-->"
 ]
 
 def tokenHashMap : Std.HashSet String :=
@@ -78,10 +81,10 @@ def finalizeToken : TokenizerM Unit := do
     | .default =>
       if tokenHashMap.contains (← getCurrToken)
       then addCurrToken
-      else throw $ IO.userError s!"TPTP.parse :: Invalid token: {(← getCurrToken)}"
+      else throw $ IO.userError s!"TPTP.parse.finalizeToken :: Invalid token: {(← getCurrToken)}"
     | .ident => addCurrToken
     | .string => addCurrToken
-    | .comment => throw $ IO.userError s!"TPTP.parse :: Cannot finalize comment"
+    | .comment => throw $ IO.userError s!"TPTP.parse.finalizeToken :: Cannot finalize comment"
     setStatus .default
 
 def tokenizeAux (str : String) : TokenizerM Unit := do
@@ -90,7 +93,7 @@ def tokenizeAux (str : String) : TokenizerM Unit := do
     | .default =>
       if char.isWhitespace then
         finalizeToken
-      else if char.isAlpha || char == '$' then
+      else if char.isAlphanum || char == '$' then
         finalizeToken
         setStatus .ident
         addToCurrToken char
@@ -157,6 +160,7 @@ def next : ParserM Token := do
   return c
 
 def infixBindingPower? : String → Option (Nat × Nat)
+| "-->" => (10, 11)
 | "|" | "&" | "<=>" | "=>" | "<=" | "<~>" | "~|" | "~&" | "@" => (60,61)
 | "=" | "!=" => (90, 90)
 | "*" => (41, 40)
@@ -177,7 +181,7 @@ def isPolyIL? : String → Bool
 
 inductive Term where
   | mk : Token → List Term → Term
-  deriving Inhabited, BEq
+  deriving Inhabited, BEq, Repr
 
 partial def Term.toString : Term → String
 | .mk head tail =>
@@ -238,9 +242,13 @@ partial def parseLhs : ParserM Term := do
       parseToken (.op ")")
       return lhs
   else if nextToken == .op "[" then
-    let args ← parseSep (.op ",") (parseTerm 0)
-    parseToken (.op "]")
-    return Term.mk nextToken args
+    if (← peek?) == some (.op "]") then
+      parseToken (.op "]")
+      return Term.mk nextToken []
+    else
+      let args ← parseSep (.op ",") (parseTerm 0)
+      parseToken (.op "]")
+      return Term.mk nextToken args
   else if let some rbp := binderBindingPower? nextToken.toString then
     parseToken (.op "[")
     let vars ← parseSep (.op ",") parseTypeDecl
@@ -319,12 +327,16 @@ def parseCommand : ParserM Command := do
     let val ← match kind with
     | "type" => parseAtomTyping
     | _ => parseTerm
+    let mut source : Option Term := none
     if (← peek?) == some (.op ",") then
       parseToken (.op ",")
-      discard $ parseTerm
+      source ← parseTerm
     parseToken (.op ")")
     parseToken (.op ".")
-    return ⟨cmd, [Term.mk (.ident name) [], Term.mk (.ident kind) [], val]⟩
+    if source.isSome then
+      return ⟨cmd, [Term.mk (.ident name) [], Term.mk (.ident kind) [], val, source.get! ]⟩
+    else
+      return ⟨cmd, [Term.mk (.ident name) [], Term.mk (.ident kind) [], val]⟩
   | "include" =>
     parseToken (.op "(")
     let str ← parseIdent
@@ -809,6 +821,11 @@ partial def term2LamTerm (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap Strin
     match term2LamTerm pi a lctx, term2LamTerm pi b lctx with
     | .sort sa, .sort sb => .sort (.func sa sb)
     | _, r => .error s!"Unexpected term {t} produces ({r})"
+  -- | ⟨.op "-->", [a, b]⟩ =>
+  --   match term2LamTerm pi a lctx, term2LamTerm pi b lctx with
+  --   | .term (.base .prop) la, .term (.base .prop) lb =>
+  --       .term (.base .prop) (.mkImp la lb)
+  --   | r₁, r₂ => .error s!"Unexpected term {t} produces ({r₁}) and ({r₂})"
   | _ => .error s!"term2LamTerm :: Could not translate to Lean Expr: {t}"
 where
   processVar (pi : ParsingInfo) (var : Term) (lctx : Std.HashMap String (Nat × LamSort)) : Option (String × LamSort) :=
@@ -884,5 +901,100 @@ def unsatCore (cmds : Array Command) : MetaM (Array Nat) := do
               if let .some n := (id.drop 4).toNat? then
                 res := res.push n
   return res
+
+open Tokenizer
+
+structure InferenceRecord where
+  ruleName : String
+  params   : List Term
+  premises : List String
+deriving Inhabited, Repr
+
+def InferenceRecord.toString : InferenceRecord → String
+| { ruleName := r, params := p, premises := ps } =>
+  s!"ruleName := {r}, params := {p}, premises := {ps}"
+
+/--
+  Given a term that represents an inference record, extract its fields.
+
+  We expect a term of the form:
+
+      inference( ruleNameTerm, paramTerm, premisesTerm )
+
+  where:
+  - `ruleNameTerm` should be an identifier term (e.g. `"rightRefl"`),
+  - `paramTerm` is either a term of the form `param(...arguments...)` or a single term,
+  - and `premisesTerm` is either a list (a term with head `[` and a list of elements)
+    or a single identifier.
+-/
+def parseInferenceRecord (t : Term) : InferenceRecord :=
+  match t with
+  | Term.mk (Token.ident "inference") args =>
+    if args.length < 3 then
+      panic! "parseInferenceRecord: Expected at least three arguments in an inference record"
+    else
+      let ruleTerm    := args[0]!
+      let paramTerm   := args[1]!
+      let premisesTerm := args[2]!
+      -- Extract the rule name from ruleTerm.
+      let ruleName :=
+        match ruleTerm with
+        | Term.mk (Token.ident s) _ => s
+        | _ => panic! s!"parseInferenceRecord: Unexpected rule term format: {ruleTerm}"
+      -- Process the parameter term.
+      let params : List Term :=
+        match paramTerm with
+        | Term.mk (Token.ident "param") subTerms => subTerms
+        | _ => [paramTerm]
+      -- Process the premises. We assume that premisesTerm is either a list
+      -- (with head "[" which we used when parsing lists) or a single identifier.
+      let premises : List String :=
+        match premisesTerm with
+        | Term.mk (Token.op "[") ps =>
+          ps.map (fun t =>
+            match t with
+            | Term.mk (Token.ident s) _ => s
+            | _ => t.toString)
+        | Term.mk (Token.ident s) _ => [s]
+        | _ => []
+      { ruleName := ruleName, params := params, premises := premises }
+  | _ =>
+    -- If the term is not an inference record then we default to an “axiom”
+    { ruleName := "axiom", params := [], premises := [] }
+
+
+def runParseInferenceRecord (code: String): IO Unit := do
+  let cmds ← parse code
+  match cmds.get? 0 with
+  | none =>
+    IO.println "No command found"
+  | some cmd =>
+    if cmd.args.length < 4 then
+      IO.println "No inference record found in the command"
+    else
+      let infRecTerm := cmd.args[3]!
+      println! "Inference record term: {infRecTerm}"
+      let infRec    := parseInferenceRecord infRecTerm
+      IO.println s!"Parsed inference record: {infRec.toString}"
+
+
+#eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))))."
+#eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0)))))).
+fof(a1, axiom, (! [X0] : (! [X1] : (X0 = app(t_a0, app(t_a0, X0)))))).
+fof(c, conjecture, (t_a1 = app(t_a0, t_a1)))."
+
+#eval parse "fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, param(0), [])).
+fof(f1, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEqForall, param($fof((t_a1 = HOLE)), $fot(HOLE)), [a0, f0])).
+fof(f2, plain, [] --> [(t_a1 = app(t_a0, t_a1))], inference(rightSubstEqForall, param($fof((t_a1 = HOLE)), $fot(HOLE)), [a1, f1]))."
+
+#eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0)))))).
+fof(a1, axiom, (! [X0] : (! [X1] : (X0 = app(t_a0, app(t_a0, X0)))))).
+fof(c, conjecture, (t_a1 = app(t_a0, t_a1))).
+fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, param(0), [])).
+fof(f1, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEqForall, param($fof((t_a1 = HOLE)), $fot(HOLE)), [a0, f0])).
+fof(f2, plain, [] --> [(t_a1 = app(t_a0, t_a1))], inference(rightSubstEqForall, param($fof((t_a1 = HOLE)), $fot(HOLE)), [a1, f1]))."
+
+#eval runParseInferenceRecord "fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, param(0), []))."
+#eval runParseInferenceRecord "fof(f1, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEqForall, param($fof((t_a1 = HOLE)), $fot(HOLE)), [a0, f0]))."
 
 end TPTP

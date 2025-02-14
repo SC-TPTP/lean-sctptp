@@ -540,27 +540,46 @@ def evalIntromono : Tactic
     replaceMainGoal [newMid]
 | _ => throwUnsupportedSyntax
 
+
+
+open Embedding.Lam in
+def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Parser.TPTP.Command)) := do
+  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
+  let lamEVarTy ← LamReif.getLamEVarTy
+  let exportLamTerms ← exportFacts.mapM (fun re => do
+    match re with
+    | .valid [] t => return t
+    | _ => throwError "{decl_name%} :: Unexpected error")
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  trace[auto.tptp.printQuery] "\n{query}"
+  let (proven, tptpProof) ← Solver.TPTP.querySolver query
+  trace[auto.tptp.printProof] "{tptpProof}"
+  if !proven then
+    return .none
+  return .some tptpProof
+
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
 -/
 def runEgg
-  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM Expr :=
+  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.Command) :=
   Meta.withDefault do
     traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
     -- trace[auto.tactic] "Conclusion: {conclusion}"
     -- let lemmas := lemmas.push conclusion
     let lemmas ← rewriteIteCondDecide lemmas
-    let (proof, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM Expr) do
+    let (cmds, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.Command)) do
       let s ← get
       let u ← computeMaxLevel s.facts
       (reifMAction s.facts s.inhTys s.inds).run' {u := u})
-    trace[auto.tactic] "Egg found proof of {← Meta.inferType proof}"
-    trace[auto.tactic.printProof] "{proof}"
-    return proof
+    return cmds
 where
   reifMAction
     (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
-    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM Expr := do
+    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM (Array Parser.TPTP.Command) := do
     let exportFacts ← LamReif.reifFacts uvalids
     let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
     let _ ← LamReif.reifInhabitations uinhs
@@ -571,13 +590,9 @@ where
     exportFacts := exportFacts'
     -- **TPTP invocation and Premise Selection**
     if auto.tptp.get (← getOptions) then
-      let (proof, unsatCore) ← queryTPTP exportFacts
-      if let .some proof := proof then
-        return proof
-      let premiseSel? := auto.tptp.premiseSelection.get (← getOptions)
-      if premiseSel? then
-        if let .some unsatCore := unsatCore then
-          exportFacts := unsatCore
+      let cmds ← queryTPTPEgg exportFacts
+      if let .some cmds := cmds then
+        return cmds
     throwError "Egg failed to find proof"
 
 @[tactic egg]
@@ -596,7 +611,54 @@ def evalEgg : Tactic
     match instr with
     | .none =>
       let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push ngoal)
-      let proof ← runEgg lemmas inhFacts
+      -- TODO: hashtable to keep track of TPTP symbols / Lean expression
+      let cmds ← runEgg lemmas inhFacts
+      for cmd in cmds do
+        trace[auto.tptp.printProof] "¬{cmd}"
+        if cmd.args.length == 4 then
+          let sequent := cmd.args[2]!
+          match sequent with
+          | ⟨.op "-->", sequentLeft :: sequentRight :: []⟩ =>
+            trace[auto.tptp.printProof] s!"Left sequent: {sequentLeft}"
+            trace[auto.tptp.printProof] s!"Right sequent: {sequentRight}"
+          | _ => throwError "Unexpected number of sequents"
+          let infRecTerm := cmd.args[3]!
+          let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
+          -- trace[auto.tptp.printProof] s!"Parsed inference record: {infRec.toString}"
+
+          -- let proofstep := match infRec.ruleName with
+          --   | "rightTrue" => ()
+          --   | "leftFalse" => ()
+          --   | "hyp" => ()
+          --   | "leftHyp" => ()
+          --   | "leftWeaken" => ()
+          --   | "rightWeaken" => ()
+          --   | "cut" => ()
+          --   | "leftAnd" => ()
+          --   | "leftOr" => ()
+          --   | "leftImplies" => ()
+          --   | "leftIff" => ()
+          --   | "leftNot" => ()
+          --   | "leftEx" => ()
+          --   | "leftAll" => ()
+          --   | "rightAnd" => ()
+          --   | "rightOr" => ()
+          --   | "rightImplies" => ()
+          --   | "rightIff" => ()
+          --   | "rightNot" => ()
+          --   | "rightEx" => ()
+          --   | "rightAll" => ()
+          --   | "rightRefl" => ()
+          --   | "rightSubst" => ()
+          --   | "leftSubst" => ()
+          --   | "rightSubstIff" => ()
+          --   | "leftSubstIff" => ()
+          --   | "instFun" => ()
+          --   | "instPred" => ()
+          --   | r => throwError s!"InferenceRule {r} not implemented yet"
+
+      logWarning "Trusting TPTP solvers. `autoTPTPSorry` is used to discharge the goal."
+      let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
       newGoal.assign proof
     | .useSorry =>
       let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]

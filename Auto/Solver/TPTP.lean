@@ -199,15 +199,19 @@ def queryEgg (query : String) : MetaM (Bool × String) := do
   -- write query to a file
   IO.FS.withFile "./.egg_problem.p" .writeNew (fun stream => stream.putStr query)
   IO.FS.withFile "./.egg_problem_sol.p" .writeNew (fun stream => stream.putStr "")
-  let solver ← createAux path #["./.egg_problem.p", "./.egg_problem_sol.p"]
+  let solver ← createAux path #["--level1", "./.egg_problem.p", "./.egg_problem_sol.p"]
   let stdout ← solver.stdout.readToEnd
   let stderr ← solver.stderr.readToEnd
-  trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
   solver.kill
-  let proven := (stdout.splitOn "SZS status Unsatisfiable").length >= 2
+  let proven := (stdout == "" ∧ stderr == "")
+  let proof ← IO.FS.readFile "./.egg_problem_sol.p"
+  if proven then
+    trace[auto.tptp.result] "Proof: \n{proof}"
+  else
+    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
   IO.FS.removeFile "./.egg_problem.p"
   IO.FS.removeFile "./.egg_problem_sol.p"
-  return (proven, stdout)
+  return (proven, proof)
 
 def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   if !(auto.tptp.get (← getOptions)) then

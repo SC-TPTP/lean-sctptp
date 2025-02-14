@@ -7,24 +7,17 @@ import Auto.Tactic
 
 set_option auto.tptp true
 set_option auto.tptp.trust true
-set_option trace.auto.tptp.printQuery true
-set_option trace.auto.tptp.result true
-
 set_option auto.tptp.solver.name "egg"
--- set_option auto.tptp.egg.path "../egg-sc-tptp"
 set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
+
+set_option trace.auto.tptp.printQuery true
+set_option trace.auto.tptp.printProof true
+set_option trace.auto.tptp.result true
+set_option trace.auto.tactic.printProof true
 
 set_option auto.mono.mode "fol"
 
-set_option trace.auto.printLemmas true
-
--- example : True := by auto
-
--- example (p : Prop) : p -> p := by auto
-
--- example : ∀ (p : Prop), p -> p := by auto
-
--- example (p : Prop) : p ∨ ¬ p := by auto
+-- set_option trace.auto.printLemmas true
 
 -- fof(a1, axiom, (! [Xx]: ((Xx = sf(sf(sf(Xx))))))).
 -- fof(a2, axiom, (! [Xx]: ((! [Xy]: ((Xx = sf(sf(Xx)))))))).

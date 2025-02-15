@@ -1048,8 +1048,8 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
 
       let rule : InferenceRule :=
         match ruleName with
-        | "rightTrue"    => InferenceRule.rightTrue (parseNat paramTerm)
-        | "leftFalse"    => InferenceRule.leftFalse (parseNat paramTerm)
+        | "rightTrue"    => InferenceRule.rightTrue (parseNat params[0]!)
+        | "leftFalse"    => InferenceRule.leftFalse (parseNat params[0]!)
         | "hyp"          =>
             if params.length < 2 then
               panic! "hyp: expected two parameters"
@@ -1064,14 +1064,14 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
               let i := parseNat (params[0]!)
               let j := parseNat (params[1]!)
               InferenceRule.leftHyp i j
-        | "leftWeaken"   => InferenceRule.leftWeaken (parseNat paramTerm)
-        | "rightWeaken"  => InferenceRule.rightWeaken (parseNat paramTerm)
-        | "cut"          => InferenceRule.cut (parseNat paramTerm)
-        | "leftAnd"      => InferenceRule.leftAnd (parseNat paramTerm)
-        | "leftOr"       => InferenceRule.leftOr (parseNat paramTerm)
-        | "leftImplies"  => InferenceRule.leftImplies (parseNat paramTerm)
-        | "leftIff"      => InferenceRule.leftIff (parseNat paramTerm)
-        | "leftNot"      => InferenceRule.leftNot (parseNat paramTerm)
+        | "leftWeaken"   => InferenceRule.leftWeaken (parseNat params[0]!)
+        | "rightWeaken"  => InferenceRule.rightWeaken (parseNat params[0]!)
+        | "cut"          => InferenceRule.cut (parseNat params[0]!)
+        | "leftAnd"      => InferenceRule.leftAnd (parseNat params[0]!)
+        | "leftOr"       => InferenceRule.leftOr (parseNat params[0]!)
+        | "leftImplies"  => InferenceRule.leftImplies (parseNat params[0]!)
+        | "leftIff"      => InferenceRule.leftIff (parseNat params[0]!)
+        | "leftNot"      => InferenceRule.leftNot (parseNat params[0]!)
         | "leftEx"       =>
             if params.length < 2 then
               panic! "leftEx: expected a numeral and a variable"
@@ -1086,11 +1086,11 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
               let i := parseNat (params[0]!)
               let t := params[1]!
               InferenceRule.leftAll i t
-        | "rightAnd"     => InferenceRule.rightAnd (parseNat paramTerm)
-        | "rightOr"      => InferenceRule.rightOr (parseNat paramTerm)
-        | "rightImplies" => InferenceRule.rightImplies (parseNat paramTerm)
-        | "rightIff"     => InferenceRule.rightIff (parseNat paramTerm)
-        | "rightNot"     => InferenceRule.rightNot (parseNat paramTerm)
+        | "rightAnd"     => InferenceRule.rightAnd (parseNat params[0]!)
+        | "rightOr"      => InferenceRule.rightOr (parseNat params[0]!)
+        | "rightImplies" => InferenceRule.rightImplies (parseNat params[0]!)
+        | "rightIff"     => InferenceRule.rightIff (parseNat params[0]!)
+        | "rightNot"     => InferenceRule.rightNot (parseNat params[0]!)
         | "rightEx"      =>
             if params.length < 2 then
               panic! "rightEx: expected a numeral and a variable"
@@ -1105,7 +1105,7 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
               let i := parseNat (params[0]!)
               let y := parseParamString (params[1]!)
               InferenceRule.rightAll i y
-        | "rightRefl"    => InferenceRule.rightRefl (parseNat paramTerm)
+        | "rightRefl"    => InferenceRule.rightRefl (parseNat params[0]!)
         | "rightSubst"   =>
             if params.length < 3 then
               panic! "rightSubst: expected three parameters"
@@ -1195,8 +1195,8 @@ def parseInferenceRecordOld (t : Term) : InferenceRecord :=
 
       let rule : InferenceRule :=
         match ruleName with
-        | "rightTrue"    => InferenceRule.rightTrue (parseNat paramTerm)
-        | "leftFalse"    => InferenceRule.leftFalse (parseNat paramTerm)
+        | "rightTrue"    => InferenceRule.rightTrue (parseNat params[0]!)
+        | "leftFalse"    => InferenceRule.leftFalse (parseNat params[0]!)
         | "hyp"          =>
             if params.length < 2 then
               panic! "hyp: expected two parameters"
@@ -1211,14 +1211,14 @@ def parseInferenceRecordOld (t : Term) : InferenceRecord :=
               let i := parseNat (params[0]!)
               let j := parseNat (params[1]!)
               InferenceRule.leftHyp i j
-        | "leftWeaken"   => InferenceRule.leftWeaken (parseNat paramTerm)
-        | "rightWeaken"  => InferenceRule.rightWeaken (parseNat paramTerm)
-        | "cut"          => InferenceRule.cut (parseNat paramTerm)
-        | "leftAnd"      => InferenceRule.leftAnd (parseNat paramTerm)
-        | "leftOr"       => InferenceRule.leftOr (parseNat paramTerm)
-        | "leftImplies"  => InferenceRule.leftImplies (parseNat paramTerm)
-        | "leftIff"      => InferenceRule.leftIff (parseNat paramTerm)
-        | "leftNot"      => InferenceRule.leftNot (parseNat paramTerm)
+        | "leftWeaken"   => InferenceRule.leftWeaken (parseNat params[0]!)
+        | "rightWeaken"  => InferenceRule.rightWeaken (parseNat params[0]!)
+        | "cut"          => InferenceRule.cut (parseNat params[0]!)
+        | "leftAnd"      => InferenceRule.leftAnd (parseNat params[0]!)
+        | "leftOr"       => InferenceRule.leftOr (parseNat params[0]!)
+        | "leftImplies"  => InferenceRule.leftImplies (parseNat params[0]!)
+        | "leftIff"      => InferenceRule.leftIff (parseNat params[0]!)
+        | "leftNot"      => InferenceRule.leftNot (parseNat params[0]!)
         | "leftEx"       =>
             if params.length < 2 then
               panic! "leftEx: expected a numeral and a variable"
@@ -1233,11 +1233,11 @@ def parseInferenceRecordOld (t : Term) : InferenceRecord :=
               let i := parseNat (params[0]!)
               let t := params[1]!
               InferenceRule.leftAll i t
-        | "rightAnd"     => InferenceRule.rightAnd (parseNat paramTerm)
-        | "rightOr"      => InferenceRule.rightOr (parseNat paramTerm)
-        | "rightImplies" => InferenceRule.rightImplies (parseNat paramTerm)
-        | "rightIff"     => InferenceRule.rightIff (parseNat paramTerm)
-        | "rightNot"     => InferenceRule.rightNot (parseNat paramTerm)
+        | "rightAnd"     => InferenceRule.rightAnd (parseNat params[0]!)
+        | "rightOr"      => InferenceRule.rightOr (parseNat params[0]!)
+        | "rightImplies" => InferenceRule.rightImplies (parseNat params[0]!)
+        | "rightIff"     => InferenceRule.rightIff (parseNat params[0]!)
+        | "rightNot"     => InferenceRule.rightNot (parseNat params[0]!)
         | "rightEx"      =>
             if params.length < 2 then
               panic! "rightEx: expected a numeral and a variable"
@@ -1252,7 +1252,7 @@ def parseInferenceRecordOld (t : Term) : InferenceRecord :=
               let i := parseNat (params[0]!)
               let y := parseParamString (params[1]!)
               InferenceRule.rightAll i y
-        | "rightRefl"    => InferenceRule.rightRefl (parseNat paramTerm)
+        | "rightRefl"    => InferenceRule.rightRefl (parseNat params[0]!)
         | "rightSubstEq"   =>
             if params.length < 3 then
               panic! "rightSubst: expected three parameters"
@@ -1344,6 +1344,10 @@ fof(c, conjecture, (t_a1 = app(t_a0, t_a1)))."
 #eval parse "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(theorem), 'X', $fot(b), []], [a1]))."
 
 #eval runParseInferenceRecordOld "fof(f1, plain, [(sf(sf(sf(cemptySet))) = cemptySet)] --> [(cemptySet = sf(sf(sf(cemptySet))))], inference(rightSubstEq, param(0, $fof((cemptySet = HOLE)), $fot(HOLE)), [f0]))."
+
+#eval runParseInferenceRecordOld "fof(f0, plain, [] --> [(t_a0 = t_a0)], inference(rightRefl, param(0), []))."
+
+
 
 #eval runParseInferenceRecord "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(theorem), 'X', $fot(b), []], [a1]))."
 

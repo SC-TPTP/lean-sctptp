@@ -561,6 +561,127 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
     return .none
   return .some tptpProof
 
+open Lean Elab Tactic
+
+/-- Helper to parse a natural number from a TPTP parameter. -/
+def parseNatParameter (params : List Parser.TPTP.Term) (idx : Nat) : TacticM Nat :=
+  match params.get? idx with
+  | some s => Parser.TPTP.parseIndex s
+  | none   => throwError "Missing parameter at index {idx}"
+
+def parseTermParameter (params : List Parser.TPTP.Term) (idx : Nat) : TacticM String :=
+  match params.get? idx with
+  | some s => pure (s.toString)
+  | none   => throwError "Missing term parameter at index {idx}"
+
+/-- Given a parsed TPTP inference record, dispatch to the corresponding Lean tactic. -/
+def applyEggRule (infRec : Parser.TPTP.InferenceRecord) : TacticM Unit :=
+  match infRec.ruleName with
+  | "rightTrue" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| exact True.intro))
+  | "leftFalse" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| exfalso; assumption))
+  | "hyp" => do
+      let i ← parseNatParameter infRec.params 0
+      let j ← parseNatParameter infRec.params 1
+      evalTactic (← `(tactic| assumption))
+  | "leftHyp" => do
+      let i ← parseNatParameter infRec.params 0
+      let j ← parseNatParameter infRec.params 1
+      evalTactic (← `(tactic| contradiction))
+  | "leftWeaken" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| sorry))
+  | "rightWeaken" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| sorry))
+  | "cut" => do
+      let i ← parseNatParameter infRec.params 0
+      let j ← parseNatParameter infRec.params 1
+      evalTactic (← `(tactic| sorry))
+  | "leftAnd" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| cases ‹_›))
+  | "leftOr" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| cases ‹_›))
+  | "leftImplies" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| apply ‹_›))
+  | "leftIff" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| simp only [iff_true_intro]))
+  | "leftNot" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| contradiction))
+  | "leftEx" => do
+      let i ← parseNatParameter infRec.params 0
+      let varName ← parseTermParameter infRec.params 1
+      evalTactic (← `(tactic| cases ‹_›))
+  | "leftAll" => do
+      let i ← parseNatParameter infRec.params 0
+      let t ← parseTermParameter infRec.params 1
+      evalTactic (← `(tactic| specialize ‹_›))
+  | "rightAnd" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| constructor))
+  | "rightOr" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| left))
+  | "rightImplies" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| intro))
+  | "rightIff" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| sorry))
+  | "rightNot" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| intro; contradiction))
+  | "rightEx" => do
+      let i ← parseNatParameter infRec.params 0
+      let varName ← parseTermParameter infRec.params 1
+      evalTactic (← `(tactic| sorry))
+  | "rightAll" => do
+      let i ← parseNatParameter infRec.params 0
+      let varName ← parseTermParameter infRec.params 1
+      evalTactic (← `(tactic| intro))
+  | "rightRefl" => do
+      let i ← parseNatParameter infRec.params 0
+      evalTactic (← `(tactic| rfl))
+  | "rightSubst" => do
+      let i ← parseNatParameter infRec.params 0
+      let predShape ← parseTermParameter infRec.params 1
+      let varName := infRec.params.get! 2
+      evalTactic (← `(tactic| subst ‹_›))
+  | "leftSubst" => do
+      let i ← parseNatParameter infRec.params 0
+      let predShape ← parseTermParameter infRec.params 1
+      let varName := infRec.params.get! 2
+      evalTactic (← `(tactic| subst ‹_›))
+  | "rightSubstIff" => do
+      let i ← parseNatParameter infRec.params 0
+      let predShape ← parseTermParameter infRec.params 1
+      let varName := infRec.params.get! 2
+      evalTactic (← `(tactic| sorry))
+  | "leftSubstIff" => do
+      let i ← parseNatParameter infRec.params 0
+      let predShape ← parseTermParameter infRec.params 1
+      let varName := infRec.params.get! 2
+      evalTactic (← `(tactic| sorry))
+  | "instFun" => do
+      let funName ← parseTermParameter infRec.params 0
+      let termStr ← parseTermParameter infRec.params 1
+      evalTactic (← `(tactic| sorry))
+  | "instPred" => do
+      let predName ← parseTermParameter infRec.params 0
+      let formulaStr ← parseTermParameter infRec.params 1
+      evalTactic (← `(tactic| sorry))
+  | rule =>
+      throwError "Inference rule {rule} not implemented in proof reconstruction"
+
+
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
 -/
@@ -597,7 +718,7 @@ where
 
 @[tactic egg]
 def evalEgg : Tactic
-| `(egg | egg $instr $hints $[$uords]*) => withMainContext do
+| `(egg | egg $instr $hints $[$uords]*) => do
   -- Suppose the goal is `∀ (x₁ x₂ ⋯ xₙ), G`
   -- First, apply `intros` to put `x₁ x₂ ⋯ xₙ` into the local context,
   --   now the goal is just `G`
@@ -605,16 +726,19 @@ def evalEgg : Tactic
   let [nngoal] ← newGoal.apply (.const ``Classical.byContradiction [])
     | throwError "{decl_name%} :: Unexpected result after applying Classical.byContradiction"
   let (ngoal, absurd) ← MVarId.intro1 nngoal
-  replaceMainGoal [absurd]
+  pushGoal absurd
+  -- replaceMainGoal [absurd]
   withMainContext do
     let instr ← parseInstr instr
     match instr with
     | .none =>
       let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push ngoal)
+      logWarning s!"{(← getGoals).map (·.name)}"
+      -- let _ ← popMainGoal
       -- TODO: hashtable to keep track of TPTP symbols / Lean expression
       let cmds ← runEgg lemmas inhFacts
       for cmd in cmds do
-        trace[auto.tptp.printProof] "¬{cmd}"
+        trace[auto.tptp.printProof] "Processing command: {cmd}"
         if cmd.args.length == 4 then
           let sequent := cmd.args[2]!
           match sequent with
@@ -625,37 +749,7 @@ def evalEgg : Tactic
           let infRecTerm := cmd.args[3]!
           let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
           -- trace[auto.tptp.printProof] s!"Parsed inference record: {infRec.toString}"
-
-          -- let proofstep := match infRec.ruleName with
-          --   | "rightTrue" => ()
-          --   | "leftFalse" => ()
-          --   | "hyp" => ()
-          --   | "leftHyp" => ()
-          --   | "leftWeaken" => ()
-          --   | "rightWeaken" => ()
-          --   | "cut" => ()
-          --   | "leftAnd" => ()
-          --   | "leftOr" => ()
-          --   | "leftImplies" => ()
-          --   | "leftIff" => ()
-          --   | "leftNot" => ()
-          --   | "leftEx" => ()
-          --   | "leftAll" => ()
-          --   | "rightAnd" => ()
-          --   | "rightOr" => ()
-          --   | "rightImplies" => ()
-          --   | "rightIff" => ()
-          --   | "rightNot" => ()
-          --   | "rightEx" => ()
-          --   | "rightAll" => ()
-          --   | "rightRefl" => ()
-          --   | "rightSubst" => ()
-          --   | "leftSubst" => ()
-          --   | "rightSubstIff" => ()
-          --   | "leftSubstIff" => ()
-          --   | "instFun" => ()
-          --   | "instPred" => ()
-          --   | r => throwError s!"InferenceRule {r} not implemented yet"
+          applyEggRule infRec
 
       logWarning "Trusting TPTP solvers. `autoTPTPSorry` is used to discharge the goal."
       let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
@@ -729,3 +823,18 @@ def evalMonoNative : Tactic
 | _ => throwUnsupportedSyntax
 
 end Auto
+
+
+set_option auto.tptp true
+set_option auto.tptp.trust true
+set_option auto.tptp.solver.name "egg"
+set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
+
+set_option trace.auto.tptp.printQuery true
+set_option trace.auto.tptp.printProof true
+set_option trace.auto.tptp.result true
+
+set_option auto.mono.mode "fol"
+
+example : A = A := by
+  egg

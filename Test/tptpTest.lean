@@ -19,6 +19,9 @@ set_option auto.mono.mode "fol"
 
 -- set_option trace.auto.printLemmas true
 
+example : A = A := by
+  egg
+
 -- fof(a1, axiom, (! [Xx]: ((Xx = sf(sf(sf(Xx))))))).
 -- fof(a2, axiom, (! [Xx]: ((! [Xy]: ((Xx = sf(sf(Xx)))))))).
 -- fof(c3, conjecture, (cemptySet = sf(cemptySet))).

@@ -963,6 +963,15 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
     { ruleName := "axiom", params := [], premises := [] }
 
 
+def parseIndex (t : Term) : MetaM Nat :=
+  match t with
+  | Term.mk (Token.ident s) _ =>
+    match s.toNat? with
+    | some n => pure n
+    | none   => throwError "parseIndex: failed to parse index from {s}"
+  | _ => throwError "parseIndex: expected identifier term"
+
+
 def runParseInferenceRecord (code: String): IO Unit := do
   let cmds ← parse code
   match cmds.get? 0 with

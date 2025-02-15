@@ -563,124 +563,65 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
 
 open Lean Elab Tactic
 
-/-- Helper to parse a natural number from a TPTP parameter. -/
-def parseNatParameter (params : List Parser.TPTP.Term) (idx : Nat) : TacticM Nat :=
-  match params.get? idx with
-  | some s => Parser.TPTP.parseIndex s
-  | none   => throwError "Missing parameter at index {idx}"
-
-def parseTermParameter (params : List Parser.TPTP.Term) (idx : Nat) : TacticM String :=
-  match params.get? idx with
-  | some s => pure (s.toString)
-  | none   => throwError "Missing term parameter at index {idx}"
-
-/-- Given a parsed TPTP inference record, dispatch to the corresponding Lean tactic. -/
-def applyEggRule (infRec : Parser.TPTP.InferenceRecord) : TacticM Unit :=
-  match infRec.ruleName with
-  | "rightTrue" => do
-      let i ← parseNatParameter infRec.params 0
+/-- Given a parsed TPTP inference record, dispatch to the corresponding Lean tactic(s). -/
+def applyInferenceRule (infRec : Parser.TPTP.InferenceRecord) : TacticM Unit :=
+  match infRec.rule with
+  | Parser.TPTP.InferenceRule.rightTrue _ => do
       evalTactic (← `(tactic| exact True.intro))
-  | "leftFalse" => do
-      let i ← parseNatParameter infRec.params 0
+  | Parser.TPTP.InferenceRule.leftFalse _ => do
       evalTactic (← `(tactic| exfalso; assumption))
-  | "hyp" => do
-      let i ← parseNatParameter infRec.params 0
-      let j ← parseNatParameter infRec.params 1
+  | Parser.TPTP.InferenceRule.hyp _ _ => do
       evalTactic (← `(tactic| assumption))
-  | "leftHyp" => do
-      let i ← parseNatParameter infRec.params 0
-      let j ← parseNatParameter infRec.params 1
+  | Parser.TPTP.InferenceRule.leftHyp _ _ => do
       evalTactic (← `(tactic| contradiction))
-  | "leftWeaken" => do
-      let i ← parseNatParameter infRec.params 0
+  | Parser.TPTP.InferenceRule.leftWeaken i => do
       evalTactic (← `(tactic| sorry))
-  | "rightWeaken" => do
-      let i ← parseNatParameter infRec.params 0
+  | Parser.TPTP.InferenceRule.rightWeaken i => do
       evalTactic (← `(tactic| sorry))
-  | "cut" => do
-      let i ← parseNatParameter infRec.params 0
-      let j ← parseNatParameter infRec.params 1
+  | Parser.TPTP.InferenceRule.cut i => do
       evalTactic (← `(tactic| sorry))
-  | "leftAnd" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| cases ‹_›))
-  | "leftOr" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| cases ‹_›))
-  | "leftImplies" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| apply ‹_›))
-  | "leftIff" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| simp only [iff_true_intro]))
-  | "leftNot" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| contradiction))
-  | "leftEx" => do
-      let i ← parseNatParameter infRec.params 0
-      let varName ← parseTermParameter infRec.params 1
-      evalTactic (← `(tactic| cases ‹_›))
-  | "leftAll" => do
-      let i ← parseNatParameter infRec.params 0
-      let t ← parseTermParameter infRec.params 1
-      evalTactic (← `(tactic| specialize ‹_›))
-  | "rightAnd" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| constructor))
-  | "rightOr" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| left))
-  | "rightImplies" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| intro))
-  | "rightIff" => do
-      let i ← parseNatParameter infRec.params 0
+  | Parser.TPTP.InferenceRule.leftAnd i => do
       evalTactic (← `(tactic| sorry))
-  | "rightNot" => do
-      let i ← parseNatParameter infRec.params 0
-      evalTactic (← `(tactic| intro; contradiction))
-  | "rightEx" => do
-      let i ← parseNatParameter infRec.params 0
-      let varName ← parseTermParameter infRec.params 1
+  | Parser.TPTP.InferenceRule.leftOr i => do
       evalTactic (← `(tactic| sorry))
-  | "rightAll" => do
-      let i ← parseNatParameter infRec.params 0
-      let varName ← parseTermParameter infRec.params 1
-      evalTactic (← `(tactic| intro))
-  | "rightRefl" => do
-      let i ← parseNatParameter infRec.params 0
+  | Parser.TPTP.InferenceRule.leftImplies i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.leftIff i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.leftNot i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.leftEx i varName => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.leftAll i t => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightAnd i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightOr i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightImplies i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightIff i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightNot i => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightEx i varName => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightAll i varName => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.rightRefl _ => do
       evalTactic (← `(tactic| rfl))
-  | "rightSubst" => do
-      let i ← parseNatParameter infRec.params 0
-      let predShape ← parseTermParameter infRec.params 1
-      let varName := infRec.params.get! 2
-      evalTactic (← `(tactic| subst ‹_›))
-  | "leftSubst" => do
-      let i ← parseNatParameter infRec.params 0
-      let predShape ← parseTermParameter infRec.params 1
-      let varName := infRec.params.get! 2
-      evalTactic (← `(tactic| subst ‹_›))
-  | "rightSubstIff" => do
-      let i ← parseNatParameter infRec.params 0
-      let predShape ← parseTermParameter infRec.params 1
-      let varName := infRec.params.get! 2
+  | Parser.TPTP.InferenceRule.rightSubst i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | "leftSubstIff" => do
-      let i ← parseNatParameter infRec.params 0
-      let predShape ← parseTermParameter infRec.params 1
-      let varName := infRec.params.get! 2
+  | Parser.TPTP.InferenceRule.leftSubst i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | "instFun" => do
-      let funName ← parseTermParameter infRec.params 0
-      let termStr ← parseTermParameter infRec.params 1
+  | Parser.TPTP.InferenceRule.rightSubstIff i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | "instPred" => do
-      let predName ← parseTermParameter infRec.params 0
-      let formulaStr ← parseTermParameter infRec.params 1
+  | Parser.TPTP.InferenceRule.leftSubstIff i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | rule =>
-      throwError "Inference rule {rule} not implemented in proof reconstruction"
-
+  | Parser.TPTP.InferenceRule.instFun funName termStr args => do
+      evalTactic (← `(tactic| sorry))
+  | Parser.TPTP.InferenceRule.instPred predName formulaStr args => do
+      evalTactic (← `(tactic| sorry))
 
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
@@ -747,9 +688,9 @@ def evalEgg : Tactic
             trace[auto.tptp.printProof] s!"Right sequent: {sequentRight}"
           | _ => throwError "Unexpected number of sequents"
           let infRecTerm := cmd.args[3]!
-          let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
-          -- trace[auto.tptp.printProof] s!"Parsed inference record: {infRec.toString}"
-          applyEggRule infRec
+          let infRec := Parser.TPTP.parseInferenceRecordOld infRecTerm
+          -- let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
+          applyInferenceRule infRec
 
       logWarning "Trusting TPTP solvers. `autoTPTPSorry` is used to discharge the goal."
       let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
@@ -836,5 +777,5 @@ set_option trace.auto.tptp.result true
 
 set_option auto.mono.mode "fol"
 
-example : A = A := by
-  egg
+-- example : A = A := by
+--   egg

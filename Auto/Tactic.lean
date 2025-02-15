@@ -609,7 +609,7 @@ def applyInferenceRule (infRec : Parser.TPTP.InferenceRecord) : TacticM Unit :=
   | Parser.TPTP.InferenceRule.rightAll i varName => do
       evalTactic (← `(tactic| sorry))
   | Parser.TPTP.InferenceRule.rightRefl _ => do
-      evalTactic (← `(tactic| rfl))
+      evalTactic (← `(tactic| contradiction))
   | Parser.TPTP.InferenceRule.rightSubst i predShape j => do
       evalTactic (← `(tactic| sorry))
   | Parser.TPTP.InferenceRule.leftSubst i predShape j => do
@@ -657,44 +657,47 @@ where
         return cmds
     throwError "Egg failed to find proof"
 
+#check LocalContext
 @[tactic egg]
 def evalEgg : Tactic
-| `(egg | egg $instr $hints $[$uords]*) => do
+| `(egg | egg $instr $hints $[$uords]*) => withMainContext do
   -- Suppose the goal is `∀ (x₁ x₂ ⋯ xₙ), G`
   -- First, apply `intros` to put `x₁ x₂ ⋯ xₙ` into the local context,
   --   now the goal is just `G`
   let (goalBinders, newGoal) ← (← getMainGoal).intros
-  let [nngoal] ← newGoal.apply (.const ``Classical.byContradiction [])
-    | throwError "{decl_name%} :: Unexpected result after applying Classical.byContradiction"
-  let (ngoal, absurd) ← MVarId.intro1 nngoal
-  pushGoal absurd
+  let currentGoalName := `__currentGoalName
+  liftMetaTactic fun g => do
+    let [newG] ← g.apply (.const ``Classical.byContradiction [])
+      | throwError "{decl_name%} :: Too many arguments"
+    let newG ← newG.introN 1 [currentGoalName]
+    return [newG.2]
   -- replaceMainGoal [absurd]
-  withMainContext do
-    let instr ← parseInstr instr
-    match instr with
-    | .none =>
-      let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push ngoal)
-      logWarning s!"{(← getGoals).map (·.name)}"
-      -- let _ ← popMainGoal
-      -- TODO: hashtable to keep track of TPTP symbols / Lean expression
-      let cmds ← runEgg lemmas inhFacts
-      for cmd in cmds do
-        trace[auto.tptp.printProof] "Processing command: {cmd}"
-        if cmd.args.length == 4 then
-          let sequent := cmd.args[2]!
-          match sequent with
-          | ⟨.op "-->", sequentLeft :: sequentRight :: []⟩ =>
-            trace[auto.tptp.printProof] s!"Left sequent: {sequentLeft}"
-            trace[auto.tptp.printProof] s!"Right sequent: {sequentRight}"
-          | _ => throwError "Unexpected number of sequents"
-          let infRecTerm := cmd.args[3]!
-          let infRec := Parser.TPTP.parseInferenceRecordOld infRecTerm
-          -- let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
-          applyInferenceRule infRec
+  let instr ← parseInstr instr
+  match instr with
+  | .none => withMainContext do
+    logWarning s!"WARNNN: {(← getLCtx).getFVarIds.map (·.name)}"
+    let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `__currentGoalName))
+    logWarning s!"{(← getGoals).map (·.name)}"
+    -- let _ ← popMainGoal
+    -- TODO: hashtable to keep track of TPTP symbols / Lean expression
+    let cmds ← runEgg lemmas inhFacts
+    for cmd in cmds do
+      trace[auto.tptp.printProof] "Processing command: {cmd}"
+      if cmd.args.length == 4 then
+        let sequent := cmd.args[2]!
+        match sequent with
+        | ⟨.op "-->", sequentLeft :: sequentRight :: []⟩ =>
+          trace[auto.tptp.printProof] s!"Left sequent: {sequentLeft}"
+          trace[auto.tptp.printProof] s!"Right sequent: {sequentRight}"
+        | _ => throwError "Unexpected number of sequents"
+        let infRecTerm := cmd.args[3]!
+        let infRec := Parser.TPTP.parseInferenceRecordOld infRecTerm
+        -- let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
+        applyInferenceRule infRec
 
-      logWarning "Trusting TPTP solvers. `autoTPTPSorry` is used to discharge the goal."
-      let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
-      newGoal.assign proof
+    logWarning "Trusting TPTP solvers. `autoTPTPSorry` is used to discharge the goal."
+    -- let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
+    -- newGoal.assign proof
     | .useSorry =>
       let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
       newGoal.assign proof
@@ -769,7 +772,7 @@ end Auto
 set_option auto.tptp true
 set_option auto.tptp.trust true
 set_option auto.tptp.solver.name "egg"
-set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
+set_option auto.tptp.egg.path "/home/ymh/projects/lean-egg/egg-sc-tptp"
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
@@ -777,5 +780,5 @@ set_option trace.auto.tptp.result true
 
 set_option auto.mono.mode "fol"
 
--- example : A = A := by
---   egg
+example : A = A := by
+  egg

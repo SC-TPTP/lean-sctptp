@@ -563,64 +563,65 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
 
 open Lean Elab Tactic
 
+open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed TPTP inference record, dispatch to the corresponding Lean tactic(s). -/
-def applyInferenceRule (infRec : Parser.TPTP.InferenceRecord) : TacticM Unit :=
+def applyInferenceRule (infRec : InferenceRecord) : TacticM Unit :=
   match infRec.rule with
-  | Parser.TPTP.InferenceRule.rightTrue _ => do
+  | rightTrue _ => do
       evalTactic (← `(tactic| exact True.intro))
-  | Parser.TPTP.InferenceRule.leftFalse _ => do
+  | leftFalse _ => do
       evalTactic (← `(tactic| exfalso; assumption))
-  | Parser.TPTP.InferenceRule.hyp _ _ => do
+  | hyp _ => do
       evalTactic (← `(tactic| assumption))
-  | Parser.TPTP.InferenceRule.leftHyp _ _ => do
+  | leftHyp _ _ => do
       evalTactic (← `(tactic| contradiction))
-  | Parser.TPTP.InferenceRule.leftWeaken i => do
+  | leftWeaken i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightWeaken i => do
+  | rightWeaken i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.cut i => do
+  | cut i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftAnd i => do
+  | leftAnd i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftOr i => do
+  | leftOr i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftImplies i => do
+  | leftImplies i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftIff i => do
+  | leftIff i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftNot i => do
+  | leftNot i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftEx i varName => do
+  | leftEx i varName => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftAll i t => do
+  | leftAll i t => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightAnd i => do
+  | rightAnd i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightOr i => do
+  | rightOr i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightImplies i => do
+  | rightImplies i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightIff i => do
+  | rightIff i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightNot i => do
+  | rightNot i => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightEx i varName => do
+  | rightEx i varName => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightAll i varName => do
+  | rightAll i varName => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightRefl _ => do
+  | rightRefl _ => do
       evalTactic (← `(tactic| contradiction))
-  | Parser.TPTP.InferenceRule.rightSubst i predShape j => do
+  | rightSubst i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftSubst i predShape j => do
+  | leftSubst i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.rightSubstIff i predShape j => do
+  | rightSubstIff i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.leftSubstIff i predShape j => do
+  | leftSubstIff i predShape j => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.instFun funName termStr args => do
+  | instFun funName termStr args => do
       evalTactic (← `(tactic| sorry))
-  | Parser.TPTP.InferenceRule.instPred predName formulaStr args => do
+  | instPred predName formulaStr args => do
       evalTactic (← `(tactic| sorry))
 
 /--
@@ -671,14 +672,11 @@ def evalEgg : Tactic
       | throwError "{decl_name%} :: Too many arguments"
     let newG ← newG.introN 1 [currentGoalName]
     return [newG.2]
-  -- replaceMainGoal [absurd]
+
   let instr ← parseInstr instr
   match instr with
   | .none => withMainContext do
-    logWarning s!"WARNNN: {(← getLCtx).getFVarIds.map (·.name)}"
     let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `__currentGoalName))
-    logWarning s!"{(← getGoals).map (·.name)}"
-    -- let _ ← popMainGoal
     -- TODO: hashtable to keep track of TPTP symbols / Lean expression
     let cmds ← runEgg lemmas inhFacts
     for cmd in cmds do
@@ -691,16 +689,13 @@ def evalEgg : Tactic
           trace[auto.tptp.printProof] s!"Right sequent: {sequentRight}"
         | _ => throwError "Unexpected number of sequents"
         let infRecTerm := cmd.args[3]!
-        let infRec := Parser.TPTP.parseInferenceRecordOld infRecTerm
-        -- let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
+        -- let infRec := Parser.TPTP.parseInferenceRecordOld infRecTerm
+        let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
         applyInferenceRule infRec
-
-    logWarning "Trusting TPTP solvers. `autoTPTPSorry` is used to discharge the goal."
-    -- let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
-    -- newGoal.assign proof
-    | .useSorry =>
-      let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
-      newGoal.assign proof
+    -- evalTactic (← `(tactic| contradiction))
+  | .useSorry =>
+    let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
+    newGoal.assign proof
 | _ => throwUnsupportedSyntax
 
 /--
@@ -772,7 +767,7 @@ end Auto
 set_option auto.tptp true
 set_option auto.tptp.trust true
 set_option auto.tptp.solver.name "egg"
-set_option auto.tptp.egg.path "/home/ymh/projects/lean-egg/egg-sc-tptp"
+set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
@@ -780,5 +775,5 @@ set_option trace.auto.tptp.result true
 
 set_option auto.mono.mode "fol"
 
-example : A = A := by
-  egg
+-- example : A = A := by
+--   egg

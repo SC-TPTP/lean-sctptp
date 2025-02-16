@@ -913,7 +913,7 @@ open Tokenizer
 inductive InferenceRule where
   | rightTrue     (i : Nat)
   | leftFalse     (i : Nat)
-  | hyp           (i : Nat) (j : Nat)
+  | hyp           (i : Nat)
   | leftHyp       (i : Nat) (j : Nat)
   | leftWeaken    (i : Nat)
   | rightWeaken   (i : Nat)
@@ -944,7 +944,7 @@ deriving Inhabited, Repr
 def InferenceRule.toString : InferenceRule → String
 | InferenceRule.rightTrue i     => s!"rightTrue {i}"
 | InferenceRule.leftFalse i     => s!"leftFalse {i}"
-| InferenceRule.hyp i j         => s!"hyp {i} {j}"
+| InferenceRule.hyp i           => s!"hyp {i}"
 | InferenceRule.leftHyp i j     => s!"leftHyp {i} {j}"
 | InferenceRule.leftWeaken i    => s!"leftWeaken {i}"
 | InferenceRule.rightWeaken i   => s!"rightWeaken {i}"
@@ -1016,18 +1016,18 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
       let paramTerm    := args[1]!
       let premisesTerm := args[2]!
 
-      -- Extract params and check that paramTerm starts with "status(theorem)"
+      -- Extract params and check that paramTerm starts with "status(thm)"
       let params :=
         match paramTerm with
         | Term.mk (Token.ident "list") (first :: args) =>
           match first with
           | Term.mk (Token.ident "status") [statusArg] =>
-            if statusArg.toString = "theorem" then
+            if statusArg.toString = "thm" then
               args
             else
-              panic! s!"parseInferenceRecord: Expected status(theorem) but got status({statusArg.toString})"
+              panic! s!"parseInferenceRecord: Expected status(thm) but got status({statusArg.toString})"
           | _ =>
-            panic! "parseInferenceRecord: Expected first element of paramTerm to be status(theorem)"
+            panic! "parseInferenceRecord: Expected first element of paramTerm to be status(thm)"
         | _ =>
           panic! "parseInferenceRecord: Expected paramTerm to be a list (i.e. parsed from square brackets)"
 
@@ -1055,8 +1055,7 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
               panic! "hyp: expected two parameters"
             else
               let i := parseNat (params[0]!)
-              let j := parseNat (params[1]!)
-              InferenceRule.hyp i j
+              InferenceRule.hyp i
         | "leftHyp"      =>
             if params.length < 2 then
               panic! "leftHyp: expected two parameters"
@@ -1160,153 +1159,6 @@ def parseInferenceRecord (t : Term) : InferenceRecord :=
     panic! "parseInferenceRecord: term is not an inference record"
 
 
-def parseInferenceRecordOld (t : Term) : InferenceRecord :=
-  match t with
-  | Term.mk (Token.ident "inference") args =>
-    if args.length < 3 then
-      panic! "parseInferenceRecordOld: expected at least three arguments"
-    else
-      let ruleTerm     := args[0]!
-      let paramTerm    := args[1]!
-      let premisesTerm := args[2]!
-
-      -- Extract params and check that paramTerm starts with "status(theorem)"
-      let params :=
-        match paramTerm with
-        | Term.mk (Token.ident "param") args =>
-          args
-        | _ =>
-          panic! "parseInferenceRecordOld: Expected paramTerm to be of the form 'param(...)'"
-
-      let premises : List String :=
-        match premisesTerm with
-        | Term.mk (Token.ident "list") args =>
-          args.map fun arg =>
-            match arg with
-            | Term.mk (Token.ident s) _ => s
-            | _ => panic! s!"parseInferenceRecordOld: unexpected premises term format: {arg}"
-        | Term.mk (Token.ident s) _ => [s]
-        | _ => panic! s!"parseInferenceRecordOld: unexpected premises term format: {premisesTerm}"
-
-      let ruleName :=
-        match ruleTerm with
-        | Term.mk (Token.ident s) _ => s
-        | _ => panic! s!"parseInferenceRecordOld: unexpected rule term format: {ruleTerm}"
-
-      let rule : InferenceRule :=
-        match ruleName with
-        | "rightTrue"    => InferenceRule.rightTrue (parseNat params[0]!)
-        | "leftFalse"    => InferenceRule.leftFalse (parseNat params[0]!)
-        | "hyp"          =>
-            if params.length < 2 then
-              panic! "hyp: expected two parameters"
-            else
-              let i := parseNat (params[0]!)
-              let j := parseNat (params[1]!)
-              InferenceRule.hyp i j
-        | "leftHyp"      =>
-            if params.length < 2 then
-              panic! "leftHyp: expected two parameters"
-            else
-              let i := parseNat (params[0]!)
-              let j := parseNat (params[1]!)
-              InferenceRule.leftHyp i j
-        | "leftWeaken"   => InferenceRule.leftWeaken (parseNat params[0]!)
-        | "rightWeaken"  => InferenceRule.rightWeaken (parseNat params[0]!)
-        | "cut"          => InferenceRule.cut (parseNat params[0]!)
-        | "leftAnd"      => InferenceRule.leftAnd (parseNat params[0]!)
-        | "leftOr"       => InferenceRule.leftOr (parseNat params[0]!)
-        | "leftImplies"  => InferenceRule.leftImplies (parseNat params[0]!)
-        | "leftIff"      => InferenceRule.leftIff (parseNat params[0]!)
-        | "leftNot"      => InferenceRule.leftNot (parseNat params[0]!)
-        | "leftEx"       =>
-            if params.length < 2 then
-              panic! "leftEx: expected a numeral and a variable"
-            else
-              let i := parseNat (params[0]!)
-              let y := parseParamString (params[1]!)
-              InferenceRule.leftEx i y
-        | "leftAll"      =>
-            if params.length < 2 then
-              panic! "leftAll: expected a numeral and a term"
-            else
-              let i := parseNat (params[0]!)
-              let t := params[1]!
-              InferenceRule.leftAll i t
-        | "rightAnd"     => InferenceRule.rightAnd (parseNat params[0]!)
-        | "rightOr"      => InferenceRule.rightOr (parseNat params[0]!)
-        | "rightImplies" => InferenceRule.rightImplies (parseNat params[0]!)
-        | "rightIff"     => InferenceRule.rightIff (parseNat params[0]!)
-        | "rightNot"     => InferenceRule.rightNot (parseNat params[0]!)
-        | "rightEx"      =>
-            if params.length < 2 then
-              panic! "rightEx: expected a numeral and a variable"
-            else
-              let i := parseNat (params[0]!)
-              let y := parseParamString (params[1]!)
-              InferenceRule.rightEx i y
-        | "rightAll"     =>
-            if params.length < 2 then
-              panic! "rightAll: expected a numeral and a variable"
-            else
-              let i := parseNat (params[0]!)
-              let y := parseParamString (params[1]!)
-              InferenceRule.rightAll i y
-        | "rightRefl"    => InferenceRule.rightRefl (parseNat params[0]!)
-        | "rightSubstEq"   =>
-            if params.length < 3 then
-              panic! "rightSubst: expected three parameters"
-            else
-              let i := parseNat (params[0]!)
-              let P := parseParamString (params[1]!)
-              let j := parseParamString (params[2]!)
-              InferenceRule.rightSubst i P j
-        | "leftSubst"    =>
-            if params.length < 3 then
-              panic! "leftSubst: expected three parameters"
-            else
-              let i := parseNat (params[0]!)
-              let P := params[1]!
-              let j := parseParamString (params[2]!)
-              InferenceRule.leftSubst i P j
-        | "rightSubstIff"  =>
-            if params.length < 3 then
-              panic! "rightSubstIff: expected three parameters"
-            else
-              let i := parseNat (params[0]!)
-              let R := parseParamString (params[1]!)
-              let j := parseParamString (params[2]!)
-              InferenceRule.rightSubstIff i R j
-        | "leftSubstIff"   =>
-            if params.length < 3 then
-              panic! "leftSubstIff: expected three parameters"
-            else
-              let i := parseNat (params[0]!)
-              let R := parseParamString (params[1]!)
-              let j := parseParamString (params[2]!)
-              InferenceRule.leftSubstIff i R j
-        | "instFun"      =>
-            if params.length < 2 then
-              panic! "instFun: expected at least two parameters"
-            else
-              let F := params[0]!
-              let t := params[1]!
-              let argsList := parseListString params[2]!
-              InferenceRule.instFun F t argsList
-        | "instPred"     =>
-            if params.length < 2 then
-              panic! "instPred: expected at least two parameters"
-            else
-              let P := params[0]!
-              let phi := params[1]!
-              let argsList := parseListString params[2]!
-              InferenceRule.instPred P phi argsList
-        | _ => panic! s!"parseInferenceRecordOld: unknown rule '{ruleName}'"
-      ⟨ rule, premises ⟩
-  | _ =>
-    panic! "parseInferenceRecordOld: term is not an inference record"
-
-
 def runParseInferenceRecord (code: String): IO Unit := do
   let cmds ← parse code
   match cmds.get? 0 with
@@ -1321,52 +1173,33 @@ def runParseInferenceRecord (code: String): IO Unit := do
       let infRec    := parseInferenceRecord infRecTerm
       IO.println s!"Parsed inference record: {infRec.toString}"
 
-def runParseInferenceRecordOld (code: String): IO Unit := do
-  let cmds ← parse code
-  match cmds.get? 0 with
-  | none =>
-    IO.println "No command found"
-  | some cmd =>
-    if cmd.args.length < 4 then
-      IO.println "No inference record found in the command"
-    else
-      let infRecTerm := cmd.args[3]!
-      println! "Inference record term: {infRecTerm}"
-      let infRec    := parseInferenceRecordOld infRecTerm
-      IO.println s!"Parsed inference record: {infRec.toString}"
-
 
 #eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))))."
 #eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0)))))).
 fof(a1, axiom, (! [X0] : (! [X1] : (X0 = app(t_a0, app(t_a0, X0)))))).
 fof(c, conjecture, (t_a1 = app(t_a0, t_a1)))."
 
-#eval parse "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(theorem), 'X', $fot(b), []], [a1]))."
-
-#eval runParseInferenceRecordOld "fof(f1, plain, [(sf(sf(sf(cemptySet))) = cemptySet)] --> [(cemptySet = sf(sf(sf(cemptySet))))], inference(rightSubstEq, param(0, $fof((cemptySet = HOLE)), $fot(HOLE)), [f0]))."
-
-#eval runParseInferenceRecordOld "fof(f0, plain, [] --> [(t_a0 = t_a0)], inference(rightRefl, param(0), []))."
+#eval parse "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(thm), 'X', $fot(b), []], [a1]))."
 
 
+#eval runParseInferenceRecord "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(thm), 'X', $fot(b), []], [a1]))."
 
-#eval runParseInferenceRecord "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(theorem), 'X', $fot(b), []], [a1]))."
+#eval runParseInferenceRecord "fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2]))."
 
-#eval runParseInferenceRecord "fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(theorem), 'X', $fot(f(c)), []], [a2]))."
-
-#eval runParseInferenceRecord "fof(f3, plain, [q(f(b)), q(g(f(b), f(f(b))))] --> [q(g(f(f(b), Y)))], inference(instFun, [status(theorem), 'X', $fot(f(b)), []], [a3]))."
-
-
-#eval runParseInferenceRecord "fof(f4, plain, [![Z] : q(g(Z, f(f(X))))] --> [q(g(f(X, f(X))))], inference(instFun, [status(theorem), 'Y', $fot(f(X)), []], [a4]))."
-
-#eval runParseInferenceRecord "fof(f5, plain, [![Y] : q(g(Y, f(f(X))))] --> [q(g(f(X, f(X))))], inference(instFun, [status(theorem), 'Y', $fot(f(X)), []], [a5]))."
-
-#eval runParseInferenceRecord "fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(theorem), 'F', $fot(g(X, X)), ['X']], [a6]))."
-
-#eval runParseInferenceRecord "fof(f7, plain, [q(g(F(f(c)), F(F(X))))] --> [], inference(instFun, [status(theorem), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a7]))."
-
-#eval runParseInferenceRecord "fof(f8, plain, [![X] : q(g(F(f(c)), F(F(X))))] --> [], inference(instFun, [status(theorem), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a8]))."
+#eval runParseInferenceRecord "fof(f3, plain, [q(f(b)), q(g(f(b), f(f(b))))] --> [q(g(f(f(b), Y)))], inference(instFun, [status(thm), 'X', $fot(f(b)), []], [a3]))."
 
 
-#eval runParseInferenceRecord "fof(f9, plain, [![X] : q(g(F(f(c)), F(F(X))))] --> [?[Y] : q(g(F(f(Y)), F(F(b))))], inference(instFun, [status(theorem), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a9]))."
+#eval runParseInferenceRecord "fof(f4, plain, [![Z] : q(g(Z, f(f(X))))] --> [q(g(f(X, f(X))))], inference(instFun, [status(thm), 'Y', $fot(f(X)), []], [a4]))."
+
+#eval runParseInferenceRecord "fof(f5, plain, [![Y] : q(g(Y, f(f(X))))] --> [q(g(f(X, f(X))))], inference(instFun, [status(thm), 'Y', $fot(f(X)), []], [a5]))."
+
+#eval runParseInferenceRecord "fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6]))."
+
+#eval runParseInferenceRecord "fof(f7, plain, [q(g(F(f(c)), F(F(X))))] --> [], inference(instFun, [status(thm), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a7]))."
+
+#eval runParseInferenceRecord "fof(f8, plain, [![X] : q(g(F(f(c)), F(F(X))))] --> [], inference(instFun, [status(thm), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a8]))."
+
+
+#eval runParseInferenceRecord "fof(f9, plain, [![X] : q(g(F(f(c)), F(F(X))))] --> [?[Y] : q(g(F(f(Y)), F(F(b))))], inference(instFun, [status(thm), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a9]))."
 
 end TPTP

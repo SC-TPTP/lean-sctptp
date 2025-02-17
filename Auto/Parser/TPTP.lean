@@ -910,6 +910,7 @@ def unsatCore (cmds : Array Command) : MetaM (Array Nat) := do
 open Tokenizer
 
 
+open Embedding.Lam in
 inductive InferenceRule where
   | rightTrue     (i : Nat)
   | leftFalse     (i : Nat)
@@ -924,6 +925,7 @@ inductive InferenceRule where
   | leftIff       (i : Nat)
   | leftNot       (i : Nat)
   | leftEx        (i : Nat) (y : String)
+  -- | leftAll       (i : Nat) (t : LamTerm)
   | leftAll       (i : Nat) (t : Term)
   | rightAnd      (i : Nat)
   | rightOr       (i : Nat)
@@ -935,10 +937,13 @@ inductive InferenceRule where
   | rightRefl     (i : Nat)
   | rightSubst    (i : Nat) (P : String) (j : String)
   | leftSubst     (i : Nat) (P : Term) (j : String)
+  -- | leftSubst     (i : Nat) (P : LamTerm) (j : String)
   | rightSubstIff (i : Nat) (R : String) (j : String)
   | leftSubstIff  (i : Nat) (R : String) (j : String)
   | instFun       (F : Term) (t : Term) (args : List String)
+  -- | instFun       (F : LamTerm) (t : LamTerm) (args : List String)
   | instPred      (P : Term) (phi : Term) (args : List String)
+  -- | instPred      (P : LamTerm) (phi : LamTerm) (args : List String)
 deriving Inhabited, Repr
 
 def InferenceRule.toString : InferenceRule → String
@@ -1006,6 +1011,7 @@ def parseListString (pt : Term) : List String :=
   | Term.mk (Token.ident s) _ => [s]
   | _ => panic! s!"parseListString: unexpected term format: {pt}"
 
+open Embedding.Lam in
 def parseInferenceRecord (t : Term) : InferenceRecord :=
   match t with
   | Term.mk (Token.ident "inference") args =>
@@ -1172,6 +1178,190 @@ def runParseInferenceRecord (code: String): IO Unit := do
       println! "Inference record term: {infRecTerm}"
       let infRec    := parseInferenceRecord infRecTerm
       IO.println s!"Parsed inference record: {infRec.toString}"
+
+
+/-- Helper to print Term tree -/
+partial def termTreeString (t : Term) (depth : Nat := 0) : String :=
+  let indent := String.join (List.replicate depth "  ")
+  match t with
+  | ⟨.ident s, []⟩ => s!"{indent}[ident {s}]"
+  | ⟨.ident s, args⟩ => s!"{indent}[ident {s}]({String.intercalate ", " (args.map termTreeString)})"
+  | ⟨.op s, []⟩ => s!"{indent}[op {s}]"
+  | ⟨.op s, args⟩    => s!"{indent}[op {s}]({String.intercalate ", " (args.map termTreeString)})"
+
+open Embedding.Lam in
+partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap String (Nat × LamSort) := {}) : LamConstr :=
+  match t with
+  | ⟨.ident "$true", []⟩ => .term (.base .prop) (.base .trueE)
+  | ⟨.ident "$false", []⟩ => .term (.base .prop) (.base .falseE)
+  | ⟨.ident "app", args⟩ =>
+    -- TODO: Check if this is correct
+    match args with
+    | [f, a] =>
+      match term2LamTermSCTPTP pi f lctx, term2LamTermSCTPTP pi a lctx with
+      | .term s f, .term _ a => .term s (.app s f a)
+      | r, _ => .error s!"`app`: Unexpected term {t} produces ({r})"
+    -- | [f, a] =>
+    --   term2LamTermSCTPTP pi (Term.mk f.func (f.args ++ [a])) lctx
+    | _ => .error s!"`app`: Unexpected term {t}"
+  | ⟨.ident ids, as⟩ =>
+    let head :=
+      match deBruijnAndSort? lctx ids with
+      | .some (db, s) => .term s (.bvar db)
+      | .none => ident2LamConstr pi ids
+    match as with
+    | .nil => head
+    | .cons _ _ => lamConstrMkAppN head (as.map (term2LamTermSCTPTP pi · lctx))
+  | ⟨.op "!", body :: var :: tail⟩ =>
+    match processVar pi var lctx with
+    | .some (name, s) =>
+      match term2LamTermSCTPTP pi ⟨.op "!", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
+      | .term (.base .prop) body => .term (.base .prop) (.mkForallEF s body)
+      | r => .error s!"`!1`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
+    | r => .error s!"`!2`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
+  | ⟨.op "?", body :: var :: tail⟩ =>
+    match processVar pi var lctx with
+    | .some (name, s) =>
+      match term2LamTermSCTPTP pi ⟨.op "?", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
+      | .term (.base .prop) body => .term (.base .prop) (.mkExistEF s body)
+      | r => .error s!"`?1`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
+    | r => .error s!"`?2`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
+  | ⟨.op "!", body :: []⟩ | ⟨.op "?", body :: []⟩ =>
+    term2LamTermSCTPTP pi body lctx
+  | ⟨.op "~", [a]⟩     =>
+    match term2LamTermSCTPTP pi a lctx with
+    | .term (.base .prop) la => .term (.base .prop) (.mkNot la)
+    | r => .error s!"`~`: Unexpected term {t} produces ({r})"
+  | ⟨.op "|", [a,b]⟩   =>
+    match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
+    | .term (.base .prop) la, .term (.base .prop) lb => .term (.base .prop) (.mkOr la lb)
+    | r₁, r₂ => .error s!"`|`: Unexpected term {t} produces ({r₁}) and ({r₂})"
+  | ⟨.op "&", [a,b]⟩   =>
+    match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
+    | .term (.base .prop) la, .term (.base .prop) lb => .term (.base .prop) (.mkAnd la lb)
+    | r₁, r₂ => .error s!"`&`: Unexpected term {t} produces ({r₁}) and ({r₂})"
+  | ⟨.op "<=>", [a,b]⟩ =>
+    match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
+    | .term (.base .prop) la, .term (.base .prop) lb => .term (.base .prop) (.mkIff la lb)
+    | r₁, r₂ => .error s!"`<=>`: Unexpected term {t} produces ({r₁}) and ({r₂})"
+  | ⟨.op "!=", [a,b]⟩  =>
+    match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
+    | .term s₁ la, .term s₂ lb =>
+      .term (.base .prop) (.mkNot (.mkEq s₁ la lb))
+      -- match s₁.beq s₂ with
+      -- | true => .term (.base .prop) (.mkNot (.mkEq s₁ la lb))
+      -- | false => .error s!"Application type mismatch in {t}"
+    | r₁, r₂ => .error s!"`!=`: Unexpected term {t} produces ({r₁}) and ({r₂})"
+  | ⟨.op "=", [a,b]⟩   =>
+    match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
+    | .term s₁ la, .term s₂ lb =>
+      .term (.base .prop) (.mkEq s₁ la lb)
+      -- match s₁.beq s₂ with
+      -- | true => .term (.base .prop) (.mkEq s₁ la lb)
+      -- | false => .error s!"Application type mismatch in {t}"
+    | r₁, r₂ => .error s!"`=`: Unexpected term {t} produces ({r₁}) and ({r₂})"
+  | ⟨.op "=>", [a,b]⟩ | ⟨.op "<=", [b,a]⟩ =>
+    match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
+    | .term (.base .prop) la, .term (.base .prop) lb => .term (.base .prop) (.mkImp la lb)
+    | r₁, r₂ => .error s!"`=>`: Unexpected term {t} produces ({r₁}) and ({r₂})"
+  | _ => .error s!"term2LamTermSCTPTP :: Could not translate to Lean Expr: {termTreeString t}"
+where
+  processVar (pi : ParsingInfo) (var : Term) (lctx : Std.HashMap String (Nat × LamSort)) : Option (String × LamSort) :=
+    match var with
+    | ⟨.ident v, []⟩ =>
+      match term2LamTermSCTPTP pi var lctx with
+      | .term s _ => .some (v, s)
+      | .sort s => .some (v, s)
+      | _ => .some (v, .base .prop)
+    | _ => .none
+  deBruijnAndSort? (lctx : Std.HashMap String (Nat × LamSort)) (id : String) : Option (Nat × LamSort) :=
+    match lctx.get? id with
+    | .some (n, s) => (lctx.size - 1 - n, s)
+    | .none => none
+  lamConstrMkAppN (head : LamConstr) (args : List LamConstr) :=
+    match head, args with
+    | .term s₁ t₁, .nil => .term s₁ t₁
+    | .term s₁ t₁, .cons (.term s₂ t₂) tail =>
+      match s₁ with
+      | .func argTy resTy =>
+        match argTy.beq s₂ with
+        | true => lamConstrMkAppN (.term resTy (.app s₂ t₁ t₂)) tail
+        | false => .error s!"term2LamTermSCTPTP :: Application type ({s₁} applied to {s₂}) mismatch in lamConstrMkAppN, `{head}` `{args}`"
+      | _ => .error s!"term2LamTermSCTPTP :: Non-function head `{head}` applied to argument"
+    | _, _ => .error s!"term2LamTermSCTPTP :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
+
+
+open Embedding.Lam in
+/--
+  Turn TSTP term into LamSort/LamTerm
+  This function is only for zipperposition's output
+-/
+def getSCTPTPProof (lamVarTy lamEVarTy : Array LamSort) (cmds : Array Command) : MetaM (Array LamTerm) := do
+  let mut ret := #[]
+  let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}⟩
+  for ⟨cmd, args⟩ in cmds do
+    match cmd with
+    | "thf" | "tff" | "cnf" | "fof" =>
+      trace[auto.tptp.printProof] "getSCTPTPProof: {cmd} {args}"
+      match args with
+      | [⟨.ident name, []⟩, ⟨.ident "plain", _⟩, sequent, inferTerm] =>
+        match sequent with
+        | ⟨.op "-->", antecedents :: consequents :: []⟩ =>
+          trace[auto.tptp.printProof] s!"Antecedents: {termTreeString antecedents}"
+          trace[auto.tptp.printProof] s!"Consequents: {termTreeString consequents}"
+
+          -- Temporary for debugging
+          match antecedents with
+          | ⟨.ident "list", antecedents⟩ =>
+            for a in antecedents do
+              match term2LamTermSCTPTP pi a with
+              | .term (.base .prop) t => pure ()
+              | .error e => trace[auto.tptp.printProof] e
+              | lc => trace[auto.tptp.printProof] s!"Unexpected LamConstr {lc}, expected term"
+          | _ => trace[auto.tptp.printProof] "Expected list of antecedents"
+
+          -- Temporary for debugging
+          match consequents with
+          | ⟨.ident "list", consequents⟩ =>
+            for a in consequents do
+              match term2LamTermSCTPTP pi a with
+              | .term (.base .prop) t => pure ()
+              | .error e => trace[auto.tptp.printProof] e
+              | lc => trace[auto.tptp.printProof] s!"Unexpected LamConstr {lc}, expected term"
+          | _ => trace[auto.tptp.printProof] "Expected list of consequents"
+
+          -- antecedents and consequents are lists of formulas
+          let antecedents := match antecedents with
+          | ⟨.ident "list", antecedents⟩ =>
+            antecedents.map fun a =>
+              match term2LamTermSCTPTP pi a with
+              | .term (.base .prop) t => t
+              | .error e => panic! e
+              | lc => panic! s!"Unexpected LamConstr {lc}, expected term"
+          | _ => panic! "Expected list of antecedents"
+          let consequents := match consequents with
+          | ⟨.ident "list", consequents⟩ =>
+            consequents.map fun a =>
+              match term2LamTermSCTPTP pi a with
+              | .term (.base .prop) t => t
+              | .error e => panic! e
+              | lc => panic! s!"Unexpected LamConstr {lc}, expected term"
+          | _ => panic! "Expected list of consequents"
+          trace[auto.tptp.printProof] s!"Antecedents (parsed): {antecedents}"
+          trace[auto.tptp.printProof] s!"Consequents (parsed): {consequents}"
+          -- trace[auto.tptp.printProof] s!"Antecedents (parsed): {antecedents.map toExpr}"
+          -- trace[auto.tptp.printProof] s!"Consequents (parsed): {consequents.map toExpr}"
+
+            -- match term2LamTermSCTPTP pi sequent with
+            -- | .term (.base .prop) t =>
+            --   ret := ret.push t
+            -- | .error e => throwError (decl_name% ++ " :: " ++ e)
+            -- | lc => throwError "{decl_name%} :: Unexpected LamConstr {lc}, expected term"
+        | _ => throwError s!"Unexpected number of formulas in sequent: {sequent}"
+      | _ => continue
+    | "include" => throwError "{decl_name%} :: `include` should not occur in proof output of TPTP solvers"
+    | _ => throwError "{decl_name%} :: Unknown command {cmd}"
+  return ret
 
 
 #eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))))."

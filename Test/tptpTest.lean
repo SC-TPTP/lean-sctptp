@@ -14,33 +14,19 @@ set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
 set_option trace.auto.tptp.result true
 set_option trace.auto.tactic.printProof true
+set_option trace.auto.lamReif.printValuation true
 
 set_option auto.mono.mode "fol"
 
 -- set_option trace.auto.printLemmas true
 
 
--- rightSubst = matching
-
-example (h : ¬ A = A) : False := by
-  apply h
-  simp
-
 -- fof(c, conjecture, (t_a0 = t_a0)).
-
--- fof(f0, plain, [] --> [(t_a0 = t_a0)], inference(rightRefl, [status(thm), 0], [])).
 example : A = A := by
   egg
-  false_or_by_contra
-  rename_i a
-  apply a
+
+  -- fof(f0, plain, [] --> [(t_a0 = t_a0)], inference(rightRefl, [status(thm), 0], [])).
   rfl
-
--- fof(a3, axiom, [P(X), Q(X)] --> [R]).
--- fof(f3, plain, [P(X) & Q(X)] --> [R], inference(leftAnd, [status(thm), 0], [a3])).
-example (h : A ∧ B) : C := by
-  cases h; rename_i h1 h2
-
 
 
 example : a -> (a /\ (a \/ b)) := by
@@ -60,6 +46,18 @@ example : a -> (a /\ (a \/ b)) := by
   exact Ha
 
 
+-- fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0)))))).
+-- fof(a1, axiom, (! [X0] : (! [X1] : (X0 = app(t_a0, app(t_a0, X0)))))).
+-- fof(c, conjecture, (t_a1 = app(t_a0, t_a1))).
+
+-- fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, [status(thm), 0], [])).
+-- fof(f1, plain, [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f0])).
+-- fof(f2, plain, [![X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(leftForall, [status(thm), 0, $fot(t_a1)], [f1])).
+-- fof(f3, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(cut, [status(thm), 0, 0], [a0, f2])).
+-- fof(f4, plain, [(app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f3])).
+-- fof(f5, plain, [![X1] : (app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(X1)], [f4])).
+-- fof(f6, plain, [![X0, X1] : (X0 = app(t_a0, app(t_a0, X0)))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(app(t_a0, t_a1))], [f5])).
+-- fof(f7, plain, [] --> [(t_a1 = app(t_a0, t_a1))], inference(cut, [status(thm), 0, 0], [a1, f6])).
 example (α : Type) (t_a0 : α -> α) (t_a1 : α)
   (h1 : ∀ x, x = t_a0 (t_a0 (t_a0 x)))
   (h2 : ∀ x, ∀ y : α, x = t_a0 (t_a0 x))
@@ -95,124 +93,6 @@ example (α : Type) (t_a0 : α -> α) (t_a1 : α)
   -- fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, [status(thm), 0], [])).
   rfl
 
-
-
--- fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0)))))).
--- fof(a1, axiom, (! [X0] : (! [X1] : (X0 = app(t_a0, app(t_a0, X0)))))).
--- fof(c, conjecture, (t_a1 = app(t_a0, t_a1))).
-
--- fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, [status(thm), 0], [])).
--- fof(f1, plain, [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f0])).
--- fof(f2, plain, [![X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(leftForall, [status(thm), 0, $fot(t_a1)], [f1])).
--- fof(f3, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(cut, [status(thm), 0, 0], [a0, f2])).
--- fof(f4, plain, [(app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f3])).
--- fof(f5, plain, [![X1] : (app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(X1)], [f4])).
--- fof(f6, plain, [![X0, X1] : (X0 = app(t_a0, app(t_a0, X0)))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(app(t_a0, t_a1))], [f5])).
--- fof(f7, plain, [] --> [(t_a1 = app(t_a0, t_a1))], inference(cut, [status(thm), 0, 0], [a1, f6])).
-theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
-  (h1 : ∀ x, x = sf (sf (sf x)))
-  (h2 : ∀ x, ∀ y : α, x = sf (sf x)) :
-  cemptySet = sf cemptySet := by
-
-  -- fof(f7, plain, [] --> [(t_a1 = app(t_a0, t_a1))], inference(cut, [status(thm), 0, 0], [a1, f6])).
-
-  -- fof(f6, plain, [![X0, X1] : (X0 = app(t_a0, app(t_a0, X0)))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(app(t_a0, t_a1))], [f5])).
-  have h2_copy := h2
-  specialize h2_copy (sf (cemptySet))
-
-  -- fof(f5, plain, [![X1] : (app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(X1)], [f4])).
-  specialize h2_copy cemptySet
-
-  -- fof(f4, plain, [(app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f3])).
-  rw [h2_copy]
-
-  -- fof(f3, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(cut, [status(thm), 0, 0], [a0, f2])).
-  have h1_copy := h1
-  specialize h1_copy cemptySet
-
-  -- fof(f2, plain, [![X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(leftForall, [status(thm), 0, $fot(t_a1)], [f1])).
-
-
-  -- fof(f1, plain, [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f0])).
-
-
-  -- fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, [status(thm), 0], [])).
-
-
-
-  false_or_by_contra
-
-  -- fof(f0, plain, [] --> [(t_a1 = t_a1)], inference(rightRefl, [status(thm), 0], [])).
-  have f0 : cemptySet = cemptySet := rfl
-
-  -- fof(f1, plain, [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f0])).
-  have f1 (h : cemptySet = sf (sf (sf cemptySet))) : (cemptySet = sf (sf (sf cemptySet))) := by
-    symm_saturate
-    let P := λ x => (cemptySet = x)
-    let t := cemptySet
-    let u := (sf (sf (sf cemptySet)))
-    have rightSubstEq (α : Type) (P : α -> Prop) (t u : α) (h1 : P t) (h2 : t = u) : P u := by
-      rw [h2] at h1
-      exact h1
-    apply rightSubstEq α P t u
-    assumption
-    assumption
-
-  -- fof(f2, plain, [![X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(leftForall, [status(thm), 0, $fot(t_a1)], [f1])).
-  have f2 (h : ∀ y : α, y = sf (sf (sf y))) : (cemptySet = sf (sf (sf cemptySet))) := by
-    symm_saturate
-    specialize h cemptySet
-    apply f1
-    assumption
-
-  -- fof(f3, plain, [] --> [(t_a1 = app(t_a0, app(t_a0, app(t_a0, t_a1))))], inference(cut, [status(thm), 0, 0], [a0, f2])).
-  have f3 : cemptySet = sf (sf (sf cemptySet)) := by
-    symm_saturate
-    apply f2
-    assumption
-
-  -- fof(f4, plain, [(app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(rightSubstEq, [status(thm), 0, $fof((t_a1 = HOLE)), 'HOLE'], [f3])).
-  have f4 (h : sf cemptySet = sf (sf (sf cemptySet))) : (cemptySet = sf cemptySet) := by
-    symm_saturate
-    let P := λ x => (cemptySet = x)
-    let t := sf (sf (sf cemptySet))
-    let u := sf (cemptySet)
-    have rightSubstEq (α : Type) (P : α -> Prop) (t u : α) (h1 : P t) (h2 : t = u) : P u := by
-      rw [h2] at h1
-      exact h1
-    apply rightSubstEq α P t u
-    assumption
-    assumption
-
-  -- fof(f5, plain, [![X1] : (app(t_a0, t_a1) = app(t_a0, app(t_a0, app(t_a0, t_a1))))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(X1)], [f4])).
-  have f5 (h : ∀ y : α, sf y = sf (sf (sf y))) : (cemptySet = sf cemptySet) := by
-    symm_saturate
-    specialize h cemptySet
-    apply f4
-    assumption
-
-  -- fof(f6, plain, [![X0, X1] : (X0 = app(t_a0, app(t_a0, X0)))] --> [(t_a1 = app(t_a0, t_a1))], inference(leftForall, [status(thm), 0, $fot(app(t_a0, t_a1))], [f5])).
-  have f6 (h : ∀ x y : α, x = sf (sf x)) : (cemptySet = sf cemptySet) := by
-    specialize h (sf cemptySet) cemptySet
-    apply f5
-    intro y
-    apply h2 (sf y) y
-
-  -- fof(f7, plain, [] --> [(t_a1 = app(t_a0, t_a1))], inference(cut, [status(thm), 0, 0], [a1, f6])).
-  have f7 : cemptySet = sf cemptySet := by
-    symm_saturate
-    apply f6
-    assumption
-
-  contradiction
-
-  -- -- have f6 : ∀ y : Type, cemptySet = sf (sf cemptySet) := by
-  -- --   specialize h2 cemptySet
-  -- --   assumption
-
-  -- -- have f5 : cemptySet = sf (sf cemptySet) := by
-  -- --   specialize f6 cemptySet
-  -- --   assumption
 
 
 -- fof(a0, axiom, (! [X0] : (app(t_a0, X0) <=> app(t_a0, app(t_a1, app(t_a1, app(t_a1, app(t_a1, app(t_a1, app(t_a1, app(t_a1, app(t_a1, X0)))))))))))).

@@ -625,14 +625,12 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
   trace[auto.tptp.printQuery] "\n{query}"
   let (proven, tptpProof) ← Solver.TPTP.querySolver query
   trace[auto.tptp.printProof] "{tptpProof}"
-  LamReif.printValuation
-
   if proven then
     try
-      let proofSteps ← Parser.TPTP.getSCTPTPProof lamVarTy lamEVarTy tptpProof
+      let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
       trace[auto.tptp.printProof] "Proof steps:"
       for step in proofSteps do
-        trace[auto.tptp.printProof] "    {step.toString}"
+        trace[auto.tptp.printProof] "    {step}"
       return .some proofSteps
     catch e =>
       trace[auto.tptp.printProof] "TPTP proof reification failed with {e.toMessageData}"
@@ -782,7 +780,7 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
 : TacticM Unit := do
   if proofsteps.size != 0 then
     let proofstep := proofsteps[proofsteps.size - 1]!
-    trace[auto.tactic.printProof] s!"Processing proof step: {proofstep.toString}"
+    trace[auto.tactic.printProof] s!"Processing proof step: {proofstep}"
     let antecedentNames ← applyProofStep proofstep antecedentNames
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     for premise in premises do
@@ -841,14 +839,12 @@ def evalEgg : Tactic
   match instr with
   | .none => withMainContext do
     let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `__currentGoalName))
-    evalTactic (← `(tactic| rename_i a; apply a)) -- reverse the contradiction by re-applying the introduced negated hypothesis
-
+    evalTactic (← `(tactic| rename_i neg_goal; apply neg_goal; clear neg_goal)) -- reverse the contradiction by re-applying the introduced negated hypothesis
     let proofsteps ← runEgg lemmas inhFacts
     let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
     for (proofstep, i) in proofsteps.zipWithIndex do
       proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
     reconstructProof proofsteps proofStepNameToIndex
-
   | .useSorry =>
     let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
     newGoal.assign proof

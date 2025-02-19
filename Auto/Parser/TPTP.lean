@@ -2,6 +2,7 @@ import Lean
 import Auto.Embedding.LamBVarOp
 import Std.Data.HashMap
 import Auto.Translation.LamReif
+import Auto.Translation.LamUtils
 
 open Lean.Meta
 open Lean
@@ -1030,63 +1031,11 @@ where
     | _, _ => .error s!"term2LamTermSCTPTP :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
 
 
-open Embedding.Lam in
-def lamSort2Expr (s : LamSort) : LamReif.ReifM Expr := do
-  match s with
-  | .atom n =>
-    let (e, _) ← LamReif.lookupTyVal! n
-    return e
-  | .base b =>
-    match b with
-    | .prop   => return Expr.sort Level.zero
-    | _       =>
-      trace[auto.tptp.printProof] s!"lamSort2Expr: unexpected base sort {b}"
-      panic! s!"lamSort2Expr: unexpected base sort {b}"
-  | .func _ _ =>
-    trace[auto.tptp.printProof] s!"lamSort2Expr: unexpected function sort {s}"
-    panic! s!"lamSort2Expr: unexpected function sort {s}"
-
-/-- Convert a LamTerm into the corresponding Lean Expr.  -/
-partial def lamTerm2Expr (t : Embedding.Lam.LamTerm) (lctx : Nat := 0) : LamReif.ReifM Expr := do
-  -- TODO: LamTerm.toStringLCtx implementation can probably help
-  match t with
-  | .atom n      => do
-    let (e, _) ← LamReif.lookupVarVal! n
-    return e
-  | .etom n      =>
-    return Expr.const (.str .anonymous ("etom" ++ toString n)) []
-  | .base n      =>
-    match n with
-    | .trueE  => return mkConst ``True
-    | .falseE => return mkConst ``False
-    | .not    => return mkConst ``Not
-    | .and    => return mkConst ``And
-    | .or     => return mkConst ``Or
-    | .imp    => return mkConst ``Iff.mp
-    | .iff    => return mkConst ``Iff
-    | .eq s     => return mkApp (mkConst ``Eq) (← lamSort2Expr s)
-    | .existE s => return mkApp (mkConst ``Exists) (← lamSort2Expr s)
-    | _ =>
-      trace[auto.tptp.printProof] s!"lamTerm2Expr: unexpected base term {n}"
-      panic! s!"lamTerm2Expr: unexpected base term {n}"
-  | .bvar n      =>
-    return .bvar n
-  | .app _ t₁@(.base b) t₂ =>
-    match b with
-    | .forallE s =>
-      return .forallE (.str .anonymous s!"x{lctx}") (← lamSort2Expr s) (← lamTerm2Expr t₂) .default
-    | _ =>
-      let f ← lamTerm2Expr t₁
-      let a ← lamTerm2Expr t₂
-      return .app f a
-  | .app _ t₁ t₂ =>
-    let f ← lamTerm2Expr t₁
-    let a ← lamTerm2Expr t₂
-    return .app f a
-  | _ =>
-    trace[auto.tptp.printProof] s!"lamTerm2Expr: unexpected term {t}"
-    panic! s!"lamTerm2Expr: unexpected term {t}"
-
+open Lam2D LamReif in
+def lamTerm2Expr (t : Embedding.Lam.LamTerm) : ReifM Expr := do
+  let tyValMap := Std.HashMap.ofList ((← getTyVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
+  let varValMap := Std.HashMap.ofList ((← getVarVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
+  interpLamTermAsUnlifted tyValMap varValMap .empty 0 t
 
 
 inductive InferenceRule where
@@ -1122,34 +1071,34 @@ deriving Inhabited, Repr
 
 open InferenceRule in
 def InferenceRule.toString : InferenceRule → String
-| rightTrue i     => s!"rightTrue {i}"
-| leftFalse i     => s!"leftFalse {i}"
-| hyp i           => s!"hyp {i}"
-| leftHyp i j     => s!"leftHyp {i} {j}"
-| leftWeaken i    => s!"leftWeaken {i}"
-| rightWeaken i   => s!"rightWeaken {i}"
-| cut i           => s!"cut {i}"
-| leftAnd i       => s!"leftAnd {i}"
-| leftOr i        => s!"leftOr {i}"
-| leftImplies i   => s!"leftImplies {i}"
-| leftIff i       => s!"leftIff {i}"
-| leftNot i       => s!"leftNot {i}"
-| leftEx i y      => s!"leftEx {i} {y}"
-| leftForall i t     => s!"leftAll {i} {t}"
-| rightAnd i      => s!"rightAnd {i}"
-| rightOr i       => s!"rightOr {i}"
-| rightImplies i  => s!"rightImplies {i}"
-| rightIff i      => s!"rightIff {i}"
-| rightNot i      => s!"rightNot {i}"
-| rightEx i y     => s!"rightEx {i} {y}"
-| rightForall i y    => s!"rightAll {i} {y}"
-| rightRefl i     => s!"rightRefl {i}"
-| rightSubstEq i P j => s!"rightSubst {i} {P} {j}"
-| leftSubstEq i P j  => s!"leftSubst {i} {P} {j}"
-| rightSubstIff i R j => s!"rightSubstIff {i} {R} {j}"
-| leftSubstIff i R j  => s!"leftSubstIff {i} {R} {j}"
-| instFun F t args => s!"instFun {F} {t} {args}"
-| instPred P phi args => s!"instPred {P} {phi} {args}"
+  | rightTrue i         => s!"rightTrue {i}"
+  | leftFalse i         => s!"leftFalse {i}"
+  | hyp i               => s!"hyp {i}"
+  | leftHyp i j         => s!"leftHyp {i} {j}"
+  | leftWeaken i        => s!"leftWeaken {i}"
+  | rightWeaken i       => s!"rightWeaken {i}"
+  | cut i               => s!"cut {i}"
+  | leftAnd i           => s!"leftAnd {i}"
+  | leftOr i            => s!"leftOr {i}"
+  | leftImplies i       => s!"leftImplies {i}"
+  | leftIff i           => s!"leftIff {i}"
+  | leftNot i           => s!"leftNot {i}"
+  | leftEx i y          => s!"leftEx {i} {y}"
+  | leftForall i t      => s!"leftForall {i} {t}"
+  | rightAnd i          => s!"rightAnd {i}"
+  | rightOr i           => s!"rightOr {i}"
+  | rightImplies i      => s!"rightImplies {i}"
+  | rightIff i          => s!"rightIff {i}"
+  | rightNot i          => s!"rightNot {i}"
+  | rightEx i y         => s!"rightEx {i} {y}"
+  | rightForall i y     => s!"rightForall {i} {y}"
+  | rightRefl i         => s!"rightRefl {i}"
+  | rightSubstEq i P j  => s!"rightSubstEq {i} {P} {j}"
+  | leftSubstEq i P j   => s!"leftSubstEq {i} {P} {j}"
+  | rightSubstIff i R j => s!"rightSubstIff {i} {R} {j}"
+  | leftSubstIff i R j  => s!"leftSubstIff {i} {R} {j}"
+  | instFun F t args    => s!"instFun {F} {t} {args}"
+  | instPred P phi args => s!"instPred {P} {phi} {args}"
 
 instance : ToString InferenceRule where
   toString := InferenceRule.toString
@@ -1259,7 +1208,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fot") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) t => pure (leftEx i (← lamTerm2Expr t))
+              | .term _ t => pure (leftEx i (← lamTerm2Expr t))
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"leftEx: expected a term but got {paramTerm1}"
@@ -1271,7 +1220,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fot") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) t => pure (leftForall i (← lamTerm2Expr t))
+              | .term _ t => pure (leftForall i (← lamTerm2Expr t))
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"leftForall: expected a term but got {paramTerm1}"
@@ -1288,7 +1237,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fot") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) t => pure (rightEx i (← lamTerm2Expr t))
+              | .term _ t => pure (rightEx i (← lamTerm2Expr t))
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"rightEx: expected a term but got {paramTerm1}"
@@ -1300,7 +1249,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fot") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) t => pure (rightForall i (← lamTerm2Expr t))
+              | .term _ t => pure (rightForall i (← lamTerm2Expr t))
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"rightForall: expected a term but got {paramTerm1}"
@@ -1314,7 +1263,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) P => pure (rightSubstEq i (← lamTerm2Expr P) j)
+              | .term _ P => pure (rightSubstEq i (← lamTerm2Expr P) j)
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"rightSubstEq: expected a term but got {paramTerm1}"
@@ -1327,7 +1276,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) t => pure (leftSubstEq i (← lamTerm2Expr t) j)
+              | .term _ t => pure (leftSubstEq i (← lamTerm2Expr t) j)
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"leftSubst: expected a term but got {paramTerm1}"
@@ -1340,7 +1289,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) R => pure (rightSubstIff i (← lamTerm2Expr R) j)
+              | .term _ R => pure (rightSubstIff i (← lamTerm2Expr R) j)
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"rightSubstIff: expected a term but got {paramTerm1}"
@@ -1353,7 +1302,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term (.base .prop) R => pure (leftSubstIff i (← lamTerm2Expr R) j)
+              | .term _ R => pure (leftSubstIff i (← lamTerm2Expr R) j)
               | _ =>
                 trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                 panic! s!"leftSubstIff: expected a term but got {paramTerm1}"
@@ -1365,11 +1314,11 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[0]! with
             | Term.mk (Token.ident "$fof") (paramTerm0 :: []) =>
               match term2LamTermSCTPTP pi paramTerm0 with
-              | .term (.base .prop) F =>
+              | .term _ F =>
                 match params[1]! with
                 | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
                   match term2LamTermSCTPTP pi paramTerm1 with
-                  | .term (.base .prop) t => pure (instFun (← lamTerm2Expr F) (← lamTerm2Expr t) argsList)
+                  | .term _ t => pure (instFun (← lamTerm2Expr F) (← lamTerm2Expr t) argsList)
                   | _ =>
                     trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                     panic! s!"instFun: expected a term but got {paramTerm1}"
@@ -1387,11 +1336,11 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
             match params[0]! with
             | Term.mk (Token.ident "$fof") (paramTerm0 :: []) =>
               match term2LamTermSCTPTP pi paramTerm0 with
-              | .term (.base .prop) P =>
+              | .term _ P =>
                 match params[1]! with
                 | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
                   match term2LamTermSCTPTP pi paramTerm1 with
-                  | .term (.base .prop) phi => pure (instPred (← lamTerm2Expr P) (← lamTerm2Expr phi) argsList)
+                  | .term _ phi => pure (instPred (← lamTerm2Expr P) (← lamTerm2Expr phi) argsList)
                   | _ =>
                     trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
                     panic! s!"instFun: expected a term but got {paramTerm1}"

@@ -965,7 +965,14 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
       | .term (.base .prop) body => .term (.base .prop) (.mkExistE s body)
       | r => .error s!"`?1`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
     | r => .error s!"`?2`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
-  | ⟨.op "!", body :: []⟩ | ⟨.op "?", body :: []⟩ =>
+  | ⟨.op "^", body :: var :: tail⟩ =>
+    match processVar pi var lctx with
+    | .some (name, s) =>
+      match term2LamTermSCTPTP pi ⟨.op "^", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
+      | .term resTy body => .term (.func s resTy) (.lam s body)
+      | r => .error s!"Unexpected term {t} produces ({r})"
+    | r => .error s!"Unexpected term {t} produces ({r})"
+  | ⟨.op "!", body :: []⟩ | ⟨.op "?", body :: []⟩ | ⟨.op "^", body :: []⟩ =>
     term2LamTermSCTPTP pi body lctx
   | ⟨.op "~", [a]⟩     =>
     match term2LamTermSCTPTP pi a lctx with
@@ -1061,10 +1068,10 @@ inductive InferenceRule where
   | rightEx       (i : Nat) (t : Expr)
   | rightForall   (i : Nat) (t : Expr)
   | rightRefl     (i : Nat)
-  | rightSubstEq  (i : Nat) (P : Expr) (j : String)
-  | leftSubstEq   (i : Nat) (P : Expr) (j : String)
-  | rightSubstIff (i : Nat) (R : Expr) (j : String)
-  | leftSubstIff  (i : Nat) (R : Expr) (j : String)
+  | rightSubstEq  (i : Nat) (P : Expr)
+  | leftSubstEq   (i : Nat) (P : Expr)
+  | rightSubstIff (i : Nat) (R : Expr)
+  | leftSubstIff  (i : Nat) (R : Expr)
   | instFun       (F : Expr) (t : Expr) (args : List String)
   | instPred      (P : Expr) (phi : Expr) (args : List String)
 deriving Inhabited, Repr
@@ -1093,10 +1100,10 @@ def InferenceRule.toString : InferenceRule → String
   | rightEx i y         => s!"rightEx {i} {y}"
   | rightForall i y     => s!"rightForall {i} {y}"
   | rightRefl i         => s!"rightRefl {i}"
-  | rightSubstEq i P j  => s!"rightSubstEq {i} {P} {j}"
-  | leftSubstEq i P j   => s!"leftSubstEq {i} {P} {j}"
-  | rightSubstIff i R j => s!"rightSubstIff {i} {R} {j}"
-  | leftSubstIff i R j  => s!"leftSubstIff {i} {R} {j}"
+  | rightSubstEq i P    => s!"rightSubstEq {i} {P}"
+  | leftSubstEq i P     => s!"leftSubstEq {i} {P}"
+  | rightSubstIff i R   => s!"rightSubstIff {i} {R}"
+  | leftSubstIff i R    => s!"leftSubstIff {i} {R}"
   | instFun F t args    => s!"instFun {F} {t} {args}"
   | instPred P phi args => s!"instPred {P} {phi} {args}"
 
@@ -1259,52 +1266,56 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
         | "rightRefl"    => pure (rightRefl (parseNat params[0]!))
         | "rightSubstEq"   =>
             let i := parseNat (params[0]!)
-            let j := parseParamString (params[2]!)
+            let Z := parseParamString (params[2]!)
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
+              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ P => pure (rightSubstEq i (← lamTerm2Expr P) j)
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
+              | .term _ P => pure (rightSubstEq i (← lamTerm2Expr P))
+              | a@_ =>
+                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}"
                 panic! s!"rightSubstEq: expected a term but got {paramTerm1}"
             | _ =>
               trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
               panic! s!"rightSubstEq: expected a term but got {params[1]!}"
         | "leftSubstEq"    =>
             let i := parseNat (params[0]!)
-            let j := parseParamString (params[2]!)
+            let Z := parseParamString (params[2]!)
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
+              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ t => pure (leftSubstEq i (← lamTerm2Expr t) j)
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
+              | .term _ t => pure (leftSubstEq i (← lamTerm2Expr t))
+              | a@_ =>
+                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}"
                 panic! s!"leftSubst: expected a term but got {paramTerm1}"
             | _ =>
               trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
               panic! s!"leftSubst: expected a term but got {params[1]!}"
         | "rightSubstIff"  =>
             let i := parseNat (params[0]!)
-            let j := parseParamString (params[2]!)
+            let Z := parseParamString (params[2]!)
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
+              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ R => pure (rightSubstIff i (← lamTerm2Expr R) j)
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
+              | .term _ R => pure (rightSubstIff i (← lamTerm2Expr R))
+              | a@_ =>
+                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}"
                 panic! s!"rightSubstIff: expected a term but got {paramTerm1}"
             | _ =>
               trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
               panic! s!"rightSubstIff: expected a term but got {params[1]!}"
         | "leftSubstIff"   =>
             let i := parseNat (params[0]!)
-            let j := parseParamString (params[2]!)
+            let Z := parseParamString (params[2]!)
             match params[1]! with
             | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
+              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
               match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ R => pure (leftSubstIff i (← lamTerm2Expr R) j)
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
+              | .term _ R => pure (leftSubstIff i (← lamTerm2Expr R))
+              | a@_ =>
+                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}"
                 panic! s!"leftSubstIff: expected a term but got {paramTerm1}"
             | _ =>
               trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"

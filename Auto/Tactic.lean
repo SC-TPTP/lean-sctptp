@@ -540,164 +540,6 @@ def evalIntromono : Tactic
     replaceMainGoal [newMid]
 | _ => throwUnsupportedSyntax
 
-
-
-open Embedding.Lam in
-def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Parser.TPTP.Command)) := do
-  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
-  let lamEVarTy ← LamReif.getLamEVarTy
-  let exportLamTerms ← exportFacts.mapM (fun re => do
-    match re with
-    | .valid [] t => return t
-    | _ => throwError "{decl_name%} :: Unexpected error")
-  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
-    lam2FOF lamVarTy lamEVarTy exportLamTerms
-  else
-    lam2TH0 lamVarTy lamEVarTy exportLamTerms
-  trace[auto.tptp.printQuery] "\n{query}"
-  let (proven, tptpProof) ← Solver.TPTP.querySolver query
-  trace[auto.tptp.printProof] "{tptpProof}"
-  if !proven then
-    return .none
-  return .some tptpProof
-
-open Lean Elab Tactic
-
-open Parser.TPTP Parser.TPTP.InferenceRule in
-/-- Given a parsed TPTP inference record, dispatch to the corresponding Lean tactic(s). -/
-def applyInferenceRule (infRec : InferenceRecord) : TacticM Unit :=
-  match infRec.rule with
-  | rightTrue _ => do
-      evalTactic (← `(tactic| exact True.intro))
-  | leftFalse _ => do
-      evalTactic (← `(tactic| exfalso; assumption))
-  | hyp _ => do
-      evalTactic (← `(tactic| assumption))
-  | leftHyp _ _ => do
-      evalTactic (← `(tactic| contradiction))
-  | leftWeaken i => do
-      evalTactic (← `(tactic| sorry))
-  | rightWeaken i => do
-      evalTactic (← `(tactic| sorry))
-  | cut i => do
-      evalTactic (← `(tactic| sorry))
-  | leftAnd i => do
-      evalTactic (← `(tactic| sorry))
-  | leftOr i => do
-      evalTactic (← `(tactic| sorry))
-  | leftImplies i => do
-      evalTactic (← `(tactic| sorry))
-  | leftIff i => do
-      evalTactic (← `(tactic| sorry))
-  | leftNot i => do
-      evalTactic (← `(tactic| sorry))
-  | leftEx i varName => do
-      evalTactic (← `(tactic| sorry))
-  | leftAll i t => do
-      evalTactic (← `(tactic| sorry))
-  | rightAnd i => do
-      evalTactic (← `(tactic| sorry))
-  | rightOr i => do
-      evalTactic (← `(tactic| sorry))
-  | rightImplies i => do
-      evalTactic (← `(tactic| sorry))
-  | rightIff i => do
-      evalTactic (← `(tactic| sorry))
-  | rightNot i => do
-      evalTactic (← `(tactic| sorry))
-  | rightEx i varName => do
-      evalTactic (← `(tactic| sorry))
-  | rightAll i varName => do
-      evalTactic (← `(tactic| sorry))
-  | rightRefl _ => do
-      evalTactic (← `(tactic| contradiction))
-  | rightSubst i predShape j => do
-      evalTactic (← `(tactic| sorry))
-  | leftSubst i predShape j => do
-      evalTactic (← `(tactic| sorry))
-  | rightSubstIff i predShape j => do
-      evalTactic (← `(tactic| sorry))
-  | leftSubstIff i predShape j => do
-      evalTactic (← `(tactic| sorry))
-  | instFun funName termStr args => do
-      evalTactic (← `(tactic| sorry))
-  | instPred predName formulaStr args => do
-      evalTactic (← `(tactic| sorry))
-
-/--
-  Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
--/
-def runEgg
-  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.Command) :=
-  Meta.withDefault do
-    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
-    -- trace[auto.tactic] "Conclusion: {conclusion}"
-    -- let lemmas := lemmas.push conclusion
-    let lemmas ← rewriteIteCondDecide lemmas
-    let (cmds, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.Command)) do
-      let s ← get
-      let u ← computeMaxLevel s.facts
-      (reifMAction s.facts s.inhTys s.inds).run' {u := u})
-    return cmds
-where
-  reifMAction
-    (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
-    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM (Array Parser.TPTP.Command) := do
-    let exportFacts ← LamReif.reifFacts uvalids
-    let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
-    let _ ← LamReif.reifInhabitations uinhs
-    let exportInds ← LamReif.reifMutInds minds
-    LamReif.printValuation
-    -- **Preprocessing in Verified Checker**
-    let (exportFacts', _) ← LamReif.preprocess exportFacts exportInds
-    exportFacts := exportFacts'
-    -- **TPTP invocation and Premise Selection**
-    if auto.tptp.get (← getOptions) then
-      let cmds ← queryTPTPEgg exportFacts
-      if let .some cmds := cmds then
-        return cmds
-    throwError "Egg failed to find proof"
-
-#check LocalContext
-@[tactic egg]
-def evalEgg : Tactic
-| `(egg | egg $instr $hints $[$uords]*) => withMainContext do
-  -- Suppose the goal is `∀ (x₁ x₂ ⋯ xₙ), G`
-  -- First, apply `intros` to put `x₁ x₂ ⋯ xₙ` into the local context,
-  --   now the goal is just `G`
-  let (goalBinders, newGoal) ← (← getMainGoal).intros
-  let currentGoalName := `__currentGoalName
-  liftMetaTactic fun g => do
-    let [newG] ← g.apply (.const ``Classical.byContradiction [])
-      | throwError "{decl_name%} :: Too many arguments"
-    let newG ← newG.introN 1 [currentGoalName]
-    return [newG.2]
-
-  let instr ← parseInstr instr
-  match instr with
-  | .none => withMainContext do
-    let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `__currentGoalName))
-    -- TODO: hashtable to keep track of TPTP symbols / Lean expression
-    let cmds ← runEgg lemmas inhFacts
-    for cmd in cmds do
-      trace[auto.tptp.printProof] "Processing command: {cmd}"
-      if cmd.args.length == 4 then
-        let sequent := cmd.args[2]!
-        match sequent with
-        | ⟨.op "-->", sequentLeft :: sequentRight :: []⟩ =>
-          trace[auto.tptp.printProof] s!"Left sequent: {sequentLeft}"
-          trace[auto.tptp.printProof] s!"Right sequent: {sequentRight}"
-        | _ => throwError "Unexpected number of sequents"
-        let infRecTerm := cmd.args[3]!
-        -- let infRec := Parser.TPTP.parseInferenceRecordOld infRecTerm
-        let infRec := Parser.TPTP.parseInferenceRecord infRecTerm
-        applyInferenceRule infRec
-    -- evalTactic (← `(tactic| contradiction))
-  | .useSorry =>
-    let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
-    newGoal.assign proof
-| _ => throwUnsupportedSyntax
-
 /--
   A monomorphization interface that can be invoked by repos dependent on `lean-auto`.
 -/
@@ -761,6 +603,257 @@ def evalMonoNative : Tactic
     absurd.assign proof
 | _ => throwUnsupportedSyntax
 
+
+
+/- #####################################
+  SC-TPTP related code
+##################################### -/
+
+
+open Embedding.Lam in
+def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Parser.TPTP.ProofStep)) := do
+  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
+  let lamEVarTy ← LamReif.getLamEVarTy
+  let exportLamTerms ← exportFacts.mapM (fun re => do
+    match re with
+    | .valid [] t => return t
+    | _ => throwError "{decl_name%} :: Unexpected error")
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  trace[auto.tptp.printQuery] "\n{query}"
+  let (proven, tptpProof) ← Solver.TPTP.querySolver query
+  trace[auto.tptp.printProof] "{tptpProof}"
+  LamReif.printValuation
+
+  if proven then
+    try
+      let proofSteps ← Parser.TPTP.getSCTPTPProof lamVarTy lamEVarTy tptpProof
+      trace[auto.tptp.printProof] "Proof steps:"
+      for step in proofSteps do
+        trace[auto.tptp.printProof] "    {step.toString}"
+      return .some proofSteps
+    catch e =>
+      trace[auto.tptp.printProof] "TPTP proof reification failed with {e.toMessageData}"
+      return .none
+  else
+    return .none
+
+
+open Lean Elab Tactic
+
+
+def MultiMap (α β : Type) [Hashable α] [BEq α] :=
+  Std.HashMap α (List β)
+
+def multiMapGet {α β : Type} [Hashable α] [BEq α]
+  (m : MultiMap α β) (k : α) : Option β :=
+  match m.get? k with
+  | some (h :: _) => some h
+  | _ => none
+
+def multiMapRemove {α β : Type} [Hashable α] [BEq α] [BEq β]
+  (m : MultiMap α β) (k : α) (v : β) : MultiMap α β :=
+  match m.get? k with
+  | some lst =>
+      let newLst := lst.filter (fun x => not (x == v))
+      if newLst.isEmpty then m.erase k else m.insert k newLst
+  | none => m
+
+def multiMapInsert {α β : Type} [Hashable α] [BEq α]
+  (m : MultiMap α β) (k : α) (v : β) : MultiMap α β :=
+  match m.get? k with
+  | some lst => m.insert k (v :: lst)
+  | none     => m.insert k [v]
+
+
+open Parser.TPTP Parser.TPTP.InferenceRule in
+/-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
+def applyProofStep (proofstep : ProofStep) (antecedentNames : MultiMap Expr Name)
+: TacticM (MultiMap Expr Name) := do
+  let mut antecedentNames := antecedentNames
+  let psName := (Name.str .anonymous proofstep.name)
+  match proofstep.rule with
+  | rightTrue _ => do
+      evalTactic (← `(tactic| exact True.intro))
+
+  | leftFalse _ => do
+      evalTactic (← `(tactic| exfalso; assumption))
+
+  | hyp _ => do
+      evalTactic (← `(tactic| assumption))
+
+  | leftHyp _ _ => do
+      evalTactic (← `(tactic| contradiction))
+
+  | leftWeaken i => do
+      let formula := proofstep.antecedents[i]!
+      match multiMapGet antecedentNames formula with
+      | some hypName =>
+        evalTactic (← `(tactic| clear $(mkIdent hypName)))
+        antecedentNames := multiMapRemove antecedentNames formula hypName
+      | none => throwError "applyProofStep: leftWeaken: cannot find antecedent"
+
+  | rightWeaken i => do
+      evalTactic (← `(tactic| sorry))
+
+  | cut i => do
+      let formula := proofstep.antecedents[i]!
+      -- evalTactic (← `(tactic| have $(mkIdent psName) : $(formula) := sorry))
+      antecedentNames := multiMapInsert antecedentNames formula psName
+
+  | leftAnd i => do
+      let formula := proofstep.antecedents[i]!
+      match multiMapGet antecedentNames formula with
+      | some hypName =>
+        -- evalTactic (← `(tactic| cases $(mkIdent hypName); rename_i $hypName.1 $hypName.2))
+        antecedentNames := antecedentNames.erase formula
+        -- TODO: missing formulas for A and B separately
+        -- antecedentNames := antecedentNames.insert proofstep.name hypName.1
+      | none => throwError "applyProofStep: leftAnd: cannot find antecedent"
+
+  | leftOr i => do
+      evalTactic (← `(tactic| sorry))
+
+  | leftImplies i => do
+      evalTactic (← `(tactic| sorry))
+
+  | leftIff i => do
+      evalTactic (← `(tactic| sorry))
+
+  | leftNot i => do
+      evalTactic (← `(tactic| sorry))
+
+  | leftEx i varName => do
+      evalTactic (← `(tactic| sorry))
+
+  | leftAll i t => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightAnd i => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightOr i => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightImplies i => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightIff i => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightNot i => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightEx i varName => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightAll i varName => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightRefl _ => do
+      evalTactic (← `(tactic| rfl))
+
+  | rightSubst i predShape j => do
+      evalTactic (← `(tactic| sorry))
+
+  | leftSubst i predShape j => do
+      evalTactic (← `(tactic| sorry))
+
+  | rightSubstIff i predShape j => do
+
+      evalTactic (← `(tactic| sorry))
+
+  | leftSubstIff i predShape j => do
+      evalTactic (← `(tactic| sorry))
+
+  | instFun funName termStr args => do
+      evalTactic (← `(tactic| sorry))
+
+  | instPred predName formulaStr args => do
+      evalTactic (← `(tactic| sorry))
+
+  pure antecedentNames
+
+partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
+  (proofStepNameToIndex : Std.HashMap String Nat)
+  (antecedentNames : MultiMap Expr Name := .empty)
+: TacticM Unit := do
+  if proofsteps.size != 0 then
+    let proofstep := proofsteps[proofsteps.size - 1]!
+    trace[auto.tactic.printProof] s!"Processing proof step: {proofstep.toString}"
+    let antecedentNames ← applyProofStep proofstep antecedentNames
+    let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
+    for premise in premises do
+      reconstructProof (proofsteps.toSubarray 0 premise) proofStepNameToIndex antecedentNames
+
+/--
+  Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
+-/
+def runEgg
+  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  Meta.withDefault do
+    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
+    -- trace[auto.tactic] "Conclusion: {conclusion}"
+    -- let lemmas := lemmas.push conclusion
+    let lemmas ← rewriteIteCondDecide lemmas
+    let (proofsteps, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.ProofStep)) do
+      let s ← get
+      let u ← computeMaxLevel s.facts
+      (reifMAction s.facts s.inhTys s.inds).run' {u := u})
+    return proofsteps
+where
+  reifMAction
+    (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
+    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+    let exportFacts ← LamReif.reifFacts uvalids
+    let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
+    let _ ← LamReif.reifInhabitations uinhs
+    let exportInds ← LamReif.reifMutInds minds
+    LamReif.printValuation
+    -- **Preprocessing in Verified Checker**
+    let (exportFacts', _) ← LamReif.preprocess exportFacts exportInds
+    exportFacts := exportFacts'
+    -- **TPTP invocation and Premise Selection**
+    if auto.tptp.get (← getOptions) then
+      let proofsteps ← queryTPTPEgg exportFacts
+      if let .some proofsteps := proofsteps then
+        return proofsteps
+    throwError "Egg failed to find proof"
+
+#check LocalContext
+@[tactic egg]
+def evalEgg : Tactic
+| `(egg | egg $instr $hints $[$uords]*) => withMainContext do
+  -- Suppose the goal is `∀ (x₁ x₂ ⋯ xₙ), G`
+  -- First, apply `intros` to put `x₁ x₂ ⋯ xₙ` into the local context,
+  --   now the goal is just `G`
+  let (goalBinders, newGoal) ← (← getMainGoal).intros
+  let currentGoalName := `__currentGoalName
+  liftMetaTactic fun g => do
+    let [newG] ← g.apply (.const ``Classical.byContradiction [])
+      | throwError "{decl_name%} :: Too many arguments"
+    let newG ← newG.introN 1 [currentGoalName]
+    return [newG.2]
+
+  let instr ← parseInstr instr
+  match instr with
+  | .none => withMainContext do
+    let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `__currentGoalName))
+    evalTactic (← `(tactic| rename_i a; apply a)) -- reverse the contradiction by re-applying the introduced negated hypothesis
+
+    let proofsteps ← runEgg lemmas inhFacts
+    let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
+    for (proofstep, i) in proofsteps.zipWithIndex do
+      proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+    reconstructProof proofsteps proofStepNameToIndex
+
+  | .useSorry =>
+    let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
+    newGoal.assign proof
+| _ => throwUnsupportedSyntax
+
 end Auto
 
 
@@ -772,8 +865,21 @@ set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/e
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
 set_option trace.auto.tptp.result true
+set_option trace.auto.lamReif.printValuation true
 
 set_option auto.mono.mode "fol"
 
 -- example : A = A := by
+--   egg
+
+-- theorem saturation (sf : Type -> Type) (cemptySet : Type)
+--   (h1 : ∀ x, x = sf (sf (sf x)))
+--   (h2 : ∀ x, (∀ y : Type, x = sf (sf x))) :
+--   cemptySet = sf cemptySet := by
+--   egg
+
+-- theorem testiff (p : Type -> Prop) (sf : Type -> Type) (cemptySet : Type)
+--   (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
+--   (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
+--   p (sf cemptySet) ↔ p cemptySet := by
 --   egg

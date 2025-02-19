@@ -907,9 +907,13 @@ def unsatCore (cmds : Array Command) : MetaM (Array Nat) := do
                 res := res.push n
   return res
 
+
+/- #####################################
+  SC-TPTP related code
+##################################### -/
+
+
 open Tokenizer
-
-
 open Embedding.Lam in
 inductive InferenceRule where
   | rightTrue     (i : Nat)
@@ -1269,6 +1273,7 @@ where
   processVar (pi : ParsingInfo) (var : Term) (lctx : Std.HashMap String (Nat × LamSort)) : Option (String × LamSort) :=
     match var with
     | ⟨.ident v, []⟩ =>
+      -- TODO: we are missing some information here
       match term2LamTermSCTPTP pi var lctx with
       | .term s _ => .some (v, s)
       | .sort s => .some (v, s)
@@ -1291,12 +1296,24 @@ where
     | _, _ => .error s!"term2LamTermSCTPTP :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
 
 
+structure ProofStep where
+  name               : String
+  rule               : InferenceRule
+  premises           : List String
+  antecedents        : List Expr
+  consequents        : List Expr
+deriving Inhabited, Repr
+
+def ProofStep.toString : ProofStep → String
+| ⟨name, rule, premises, ant, con⟩ =>
+  s!"{name} : {rule.toString} {premises} | {ant} | {con}"
+
 open Embedding.Lam in
 /--
   Turn TSTP term into LamSort/LamTerm
   This function is only for zipperposition's output
 -/
-def getSCTPTPProof (lamVarTy lamEVarTy : Array LamSort) (cmds : Array Command) : MetaM (Array LamTerm) := do
+def getSCTPTPProof (lamVarTy lamEVarTy : Array LamSort) (cmds : Array Command) : MetaM (Array ProofStep) := do
   let mut ret := #[]
   let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}⟩
   for ⟨cmd, args⟩ in cmds do

@@ -688,7 +688,21 @@ def haveExpr (hName : Name) (p : Expr) : TacticM Unit := do
   mainMVarId.assign (mkApp (mkMVar newMainGoal.mvarId!) (mkMVar hDecl))
   -- Produce two goals: one for proving p (the subgoal) and one for the updated original goal.
   setGoals [newGoal.mvarId!, newMainGoal.mvarId!]
-  pure ()
+
+open Meta in
+def evalSpecialize (e : Expr) := withMainContext do
+  -- let (e, mvarIds') ← elabTermWithHoles e none `specialize (allowNaturalHoles := true)
+  let h := e.getAppFn
+  if h.isFVar then
+    let localDecl ← h.fvarId!.getDecl
+    let mvarId ← (← getMainGoal).assert localDecl.userName (← inferType e).headBeta e
+    let (_, mvarId) ← mvarId.intro1P
+    let mvarId ← mvarId.tryClear h.fvarId!
+    replaceMainGoal ([mvarId])
+    -- replaceMainGoal (mvarIds' ++ [mvarId])
+  else
+    throwError "'specialize' requires a term of the form `h x_1 .. x_n` where `h` appears in the local context"
+
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -697,17 +711,10 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   let mut antecedentNames := antecedentNames
   let psName := (Name.str .anonymous proofstep.name)
   match proofstep.rule with
-  | rightTrue _ => do
-    evalTactic (← `(tactic| exact True.intro))
-
-  | leftFalse _ => do
-    evalTactic (← `(tactic| exfalso; assumption))
-
-  | hyp _ => do
-    evalTactic (← `(tactic| assumption))
-
-  | leftHyp _ _ => do
-    evalTactic (← `(tactic| contradiction))
+  | rightTrue _ => do evalTactic (← `(tactic| exact True.intro))
+  | leftFalse _ => do evalTactic (← `(tactic| exfalso; assumption))
+  | hyp _       => do evalTactic (← `(tactic| assumption))
+  | leftHyp _ _ => do evalTactic (← `(tactic| contradiction))
 
   | leftWeaken i => do
     let formula := proofstep.antecedents[i]!
@@ -729,7 +736,9 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let formula := proofstep.antecedents[i]!
     match multiMapGet antecedentNames formula with
     | some hypName =>
-      -- evalTactic (← `(tactic| cases $(mkIdent hypName); rename_i $hypName.1 $hypName.2))
+      let hypName1 := Name.str hypName "1"
+      let hypName2 := Name.str hypName "2"
+      -- evalTactic (← `(tactic| cases $(mkIdent hypName); rename_i $(mkIdent hypName1) $(mkIdent hypName2)))
       antecedentNames := antecedentNames.erase formula
       -- TODO: missing formulas for A and B separately
       -- antecedentNames := antecedentNames.insert proofstep.name hypName.1
@@ -750,8 +759,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | leftEx i varName => do
     evalTactic (← `(tactic| sorry))
 
-  | leftForall i t => do
-    evalTactic (← `(tactic| sorry))
+  | leftForall i t => do evalSpecialize t
 
   | rightAnd i => do
     evalTactic (← `(tactic| sorry))
@@ -774,8 +782,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | rightForall i varName => do
     evalTactic (← `(tactic| sorry))
 
-  | rightRefl _ => do
-    evalTactic (← `(tactic| rfl))
+  | rightRefl _ => do evalTactic (← `(tactic| rfl))
 
   | rightSubstEq i predShape j => do
     evalTactic (← `(tactic| sorry))
@@ -891,6 +898,12 @@ set_option auto.mono.mode "fol"
 
 -- example : A = A := by
 --   egg
+
+-- example (h : A ∧ B) : True := by
+--   cases h; rename_i h_a h_b
+
+-- example (h : False) : A = A := by
+--   exfalso; assumption
 
 -- example (α : Type) (sf : α -> α) (cemptySet : α)
 --   (h1 : ∀ x, x = sf (sf (sf x)))

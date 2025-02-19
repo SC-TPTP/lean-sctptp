@@ -624,7 +624,6 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
     lam2TH0 lamVarTy lamEVarTy exportLamTerms
   trace[auto.tptp.printQuery] "\n{query}"
   let (proven, tptpProof) ← Solver.TPTP.querySolver query
-  trace[auto.tptp.printProof] "{tptpProof}"
   if proven then
     try
       let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
@@ -726,7 +725,7 @@ def applyProofStep (proofstep : ProofStep) (antecedentNames : MultiMap Expr Name
   | leftEx i varName => do
       evalTactic (← `(tactic| sorry))
 
-  | leftAll i t => do
+  | leftForall i t => do
       evalTactic (← `(tactic| sorry))
 
   | rightAnd i => do
@@ -747,16 +746,16 @@ def applyProofStep (proofstep : ProofStep) (antecedentNames : MultiMap Expr Name
   | rightEx i varName => do
       evalTactic (← `(tactic| sorry))
 
-  | rightAll i varName => do
+  | rightForall i varName => do
       evalTactic (← `(tactic| sorry))
 
   | rightRefl _ => do
       evalTactic (← `(tactic| rfl))
 
-  | rightSubst i predShape j => do
+  | rightSubstEq i predShape j => do
       evalTactic (← `(tactic| sorry))
 
-  | leftSubst i predShape j => do
+  | leftSubstEq i predShape j => do
       evalTactic (← `(tactic| sorry))
 
   | rightSubstIff i predShape j => do
@@ -860,7 +859,7 @@ set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/e
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
-set_option trace.auto.tptp.result true
+-- set_option trace.auto.tptp.result true
 set_option trace.auto.lamReif.printValuation true
 
 set_option auto.mono.mode "fol"
@@ -868,13 +867,13 @@ set_option auto.mono.mode "fol"
 -- example : A = A := by
 --   egg
 
--- theorem saturation (sf : Type -> Type) (cemptySet : Type)
+-- theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
 --   (h1 : ∀ x, x = sf (sf (sf x)))
---   (h2 : ∀ x, (∀ y : Type, x = sf (sf x))) :
+--   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
 --   cemptySet = sf cemptySet := by
 --   egg
 
--- theorem testiff (p : Type -> Prop) (sf : Type -> Type) (cemptySet : Type)
+-- theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
 --   (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
 --   (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
 --   p (sf cemptySet) ↔ p cemptySet := by

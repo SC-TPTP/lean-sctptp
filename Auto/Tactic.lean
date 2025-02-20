@@ -682,7 +682,7 @@ def haveExpr (hName : Name) (p : Expr) : TacticM Unit := do
   let (_fvar, newMainGoal) ← newMainGoal.intro1P
   
   -- set the goal to the `have` goal and the new main goal with the have introduced.
-  setGoals [newGoal.mvarId!, newMainGoal]
+  replaceMainGoal [newGoal.mvarId!, newMainGoal]
 
 -- Test the implementation of `haveExpr`
 example : True := by

@@ -449,7 +449,7 @@ namespace Lam2D
       if b.isForallE then
         match arginterp with
         | .lam n t b bod => return .forallE n t b bod
-        | _ => throwError "{decl_name%}: Yann's assumption failed: argument is not a lambda"
+        | _ => throwError "{decl_name%}: Yann's assumption failed: argument is not a lambda, {arginterp}"
       else
         let fninterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx fn
         return .app fninterp arginterp

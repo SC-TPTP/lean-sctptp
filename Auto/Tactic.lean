@@ -627,9 +627,6 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
   if proven then
     try
       let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
-      trace[auto.tptp.printProof] "Proof steps:"
-      for step in proofSteps do
-        trace[auto.tptp.printProof] "    {step}"
       return .some proofSteps
     catch e =>
       trace[auto.tptp.printProof] "TPTP proof reification failed with {e.toMessageData}"
@@ -692,16 +689,18 @@ example : True := by
   · exact Random
 
 open Meta in
-def evalSpecialize (e : Expr) := withMainContext do
+def evalSpecialize (e : Expr) : TacticM Expr := withMainContext do
   -- let (e, mvarIds') ← elabTermWithHoles e none `specialize (allowNaturalHoles := true)
   let h := e.getAppFn
   if h.isFVar then
     let localDecl ← h.fvarId!.getDecl
     let mvarId ← (← getMainGoal).assert localDecl.userName (← inferType e).headBeta e
     let (_, mvarId) ← mvarId.intro1P
+    let newHypExpr ← mvarId.getType
     let mvarId ← mvarId.tryClear h.fvarId!
     replaceMainGoal ([mvarId])
     -- replaceMainGoal (mvarIds' ++ [mvarId])
+    pure newHypExpr
   else
     throwError "'specialize' requires a term of the form `h x_1 .. x_n` where `h` appears in the local context"
 
@@ -744,7 +743,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       antecedentNames := antecedentNames.erase formula
       -- TODO: missing formulas for A and B separately
       -- antecedentNames := antecedentNames.insert proofstep.name hypName.1
-    | none => throwError "applyProofStep: leftAnd: cannot find antecedent"
+    | none => throwError s!"applyProofStep: leftAnd: cannot find antecedent `{formula}`"
 
   | leftOr i => do
     evalTactic (← `(tactic| sorry))
@@ -761,7 +760,13 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | leftEx i varName => do
     evalTactic (← `(tactic| sorry))
 
-  | leftForall i t => do evalSpecialize t
+  | leftForall i t => do
+    match multiMapGet antecedentNames proofstep.antecedents[i]! with
+    | some hypName =>
+      let paramExpr := Expr.app (Expr.const hypName []) t
+      let newHypExpr ← evalSpecialize paramExpr
+      antecedentNames := multiMapInsert antecedentNames newHypExpr hypName
+    | none => throwError s!"applyProofStep: leftForall: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | rightAnd i => do
     evalTactic (← `(tactic| sorry))
@@ -787,7 +792,11 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | rightRefl _ => do evalTactic (← `(tactic| rfl))
 
   | rightSubstEq i predShape => do
-    evalTactic (← `(tactic| sorry))
+    -- TODO: partial implementation
+    let formula := proofstep.antecedents[i]!
+    match multiMapGet antecedentNames formula with
+    | some hypName => evalTactic (← `(tactic| first | apply Eq.subst $(mkIdent hypName) | apply Eq.subst $(mkIdent hypName).symm))
+    | none => throwError s!"applyProofstep: rightSubstEq: cannot find corresponding hypothesis to antecedent `{formula}` in the context"
 
   | leftSubstEq i predShape => do
     evalTactic (← `(tactic| sorry))
@@ -812,12 +821,13 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
 : TacticM Unit := do
   if proofsteps.size != 0 then
     let proofstep := proofsteps[proofsteps.size - 1]!
-    trace[auto.tactic.printProof] s!"Processing proof step: {proofstep}"
+    trace[auto.tptp.printProof] s!"  {proofstep}"
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
+    trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
     let antecedentNames ← applyProofStep proofstep premisesProofstep.toArray antecedentNames
     for premise in premises do
-      reconstructProof (proofsteps.toSubarray 0 premise) proofStepNameToIndex antecedentNames
+      reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex antecedentNames
 
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
@@ -874,9 +884,25 @@ def evalEgg : Tactic
     let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `__currentGoalName))
     evalTactic (← `(tactic| rename_i neg_goal; apply neg_goal; clear neg_goal)) -- reverse the contradiction by re-applying the introduced negated hypothesis
     let proofsteps ← runEgg lemmas inhFacts
+
+    -- Trick: add original hypotheses as ProofStep with the `hyp` rule
+    let lemmas := lemmas.eraseIdx! (lemmas.size -1) -- drop last lemmas as it is the negated goal
+    let proofsteps := (lemmas.zipWithIndex.map (fun (lemma, i) =>{
+      name := s!"a{i}",
+      rule := .hyp i,
+      antecedents := [],
+      consequents := [lemma.type],
+      premises := []
+    })) ++ proofsteps
+
+    trace[auto.tptp.printProof] "Proof steps (forward):"
+    for step in proofsteps do
+      trace[auto.tptp.printProof] "  {step}"
+
     let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
     for (proofstep, i) in proofsteps.zipWithIndex do
       proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+    trace[auto.tptp.printProof] "Proof steps (backward):"
     reconstructProof proofsteps proofStepNameToIndex
   | .useSorry =>
     let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]

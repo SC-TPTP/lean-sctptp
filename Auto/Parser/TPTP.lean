@@ -1042,8 +1042,8 @@ open Lam2D LamReif in
 def lamTerm2Expr (t : Embedding.Lam.LamTerm) : ReifM Expr := do
   let tyValMap := Std.HashMap.ofList ((← getTyVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
   let varValMap := Std.HashMap.ofList ((← getVarVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
-  -- interpLamTermAsUnlifted tyValMap varValMap .empty 0 t
-  interpLamTermAsUnliftedWithInference tyValMap varValMap .empty 0 t
+  interpLamTermAsUnlifted tyValMap varValMap .empty 0 t
+  -- interpLamTermAsUnliftedWithInference tyValMap varValMap .empty 0 t
 
 
 inductive InferenceRule where

@@ -680,7 +680,7 @@ def haveExpr (hName : Name) (p : Expr) : TacticM Unit := do
   let newMainGoal ← currentMainGoal.assert hName p newGoal
   -- We then need to introduce the binding into the context.
   let (_fvar, newMainGoal) ← newMainGoal.intro1P
-  
+
   -- set the goal to the `have` goal and the new main goal with the have introduced.
   replaceMainGoal [newGoal.mvarId!, newMainGoal]
 
@@ -786,16 +786,16 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | rightRefl _ => do evalTactic (← `(tactic| rfl))
 
-  | rightSubstEq i predShape j => do
+  | rightSubstEq i predShape => do
     evalTactic (← `(tactic| sorry))
 
-  | leftSubstEq i predShape j => do
+  | leftSubstEq i predShape => do
     evalTactic (← `(tactic| sorry))
 
-  | rightSubstIff i predShape j => do
+  | rightSubstIff i predShape => do
     evalTactic (← `(tactic| sorry))
 
-  | leftSubstIff i predShape j => do
+  | leftSubstIff i predShape => do
     evalTactic (← `(tactic| sorry))
 
   | instFun funName termStr args => do

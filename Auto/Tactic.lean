@@ -670,24 +670,26 @@ A helper that, given a name and an expression for the type (P), creates
 a new goal for proving P and adds a hypothesis (H : P) to the current goal.
 -/
 def haveExpr (hName : Name) (p : Expr) : TacticM Unit := do
-  -- current goal is G
-  let mainMVarId ← getMainGoal
-  let mainType ← mainMVarId.getType
+  -- current goal is G.
+  let currentMainGoal ← getMainGoal
+
   -- Create a new goal to prove p.
-  let newGoal ← mkFreshExprMVar p (userName := (.str .anonymous hName.toString))
-  -- Create a local constant H : p that stands for the new goal.
-  let hDecl ← mainMVarId.assert hName p newGoal
-  -- Update the main goal: abstract over H.
-  let fvar ← (← getLCtx).findFromUserName? hName
-    |>.map (fun x => pure x.fvarId)
-    |>.get!
-  let mainTypeInst ← instantiateMVars mainType
-  let newMainType ← mkForallFVars #[mkFVar fvar] mainTypeInst
-  let newMainGoal ← mkFreshExprMVar newMainType (userName := (.str .anonymous (mainMVarId.name.toString ++ "_with_" ++ hName.toString)))
-  -- Replace the previous goal with one that has h in its context.
-  mainMVarId.assign (mkApp (mkMVar newMainGoal.mvarId!) (mkMVar hDecl))
-  -- Produce two goals: one for proving p (the subgoal) and one for the updated original goal.
-  setGoals [newGoal.mvarId!, newMainGoal.mvarId!]
+  let newGoal ← mkFreshExprMVar (.some p) (userName := hName)
+
+  -- Assert is essentially the Expr level of `have`.
+  let newMainGoal ← currentMainGoal.assert hName p newGoal
+  -- We then need to introduce the binding into the context.
+  let (_fvar, newMainGoal) ← newMainGoal.intro1P
+  
+  -- set the goal to the `have` goal and the new main goal with the have introduced.
+  setGoals [newGoal.mvarId!, newMainGoal]
+
+-- Test the implementation of `haveExpr`
+example : True := by
+  run_tac do
+    haveExpr `Random (← elabTerm (← `(True)) .none)
+  · exact True.intro
+  · exact Random
 
 open Meta in
 def evalSpecialize (e : Expr) := withMainContext do

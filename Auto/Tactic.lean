@@ -688,28 +688,32 @@ example : True := by
   · exact True.intro
   · exact Random
 
+#check LocalContext
 open Meta in
-def evalSpecialize (e : Expr) : TacticM Expr := withMainContext do
+def evalSpecialize (n : Name) (e : Expr) : TacticM Unit := withMainContext do
   -- let (e, mvarIds') ← elabTermWithHoles e none `specialize (allowNaturalHoles := true)
-  let h := e.getAppFn
-  if h.isFVar then
-    let localDecl ← h.fvarId!.getDecl
-    let mvarId ← (← getMainGoal).assert localDecl.userName (← inferType e).headBeta e
-    let (_, mvarId) ← mvarId.intro1P
-    let newHypExpr ← mvarId.getType
-    let mvarId ← mvarId.tryClear h.fvarId!
-    replaceMainGoal ([mvarId])
-    -- replaceMainGoal (mvarIds' ++ [mvarId])
-    pure newHypExpr
-  else
-    throwError "'specialize' requires a term of the form `h x_1 .. x_n` where `h` appears in the local context"
+  let lctx ← getLCtx
+  let .some localDecl := lctx.findFromUserName? n 
+    | throwError m!"{decl_name%} : Could not find {n} in context"
+  let applied := .app (.fvar localDecl.fvarId) e
+  let mvarId ← (← getMainGoal).assert localDecl.userName (← inferType applied).headBeta applied
+  let (_, mvarId) ← mvarId.intro1P
+  let mvarId ← mvarId.tryClear localDecl.fvarId
+  replaceMainGoal [mvarId]
 
+example : True := by
+  run_tac do
+    haveExpr `Random (← elabTerm (← `(True → True)) .none)
+  · exact fun _ => True.intro
+  · run_tac evalSpecialize `Random (← elabTerm (← `(True.intro)) .none)
+    exact Random
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
-def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep) (antecedentNames : MultiMap Expr Name)
-: TacticM (MultiMap Expr Name) := do
+def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep) (antecedentNames : MultiMap Expr Name) (antecedentIndex : List Name)
+: TacticM (MultiMap Expr Name × List Name) := do
   let mut antecedentNames := antecedentNames
+  let mut antecedentIndex := antecedentIndex
   let psName := (Name.str .anonymous proofstep.name)
   match proofstep.rule with
   | rightTrue _ => do evalTactic (← `(tactic| exact True.intro))
@@ -718,11 +722,10 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | leftHyp _ _ => do evalTactic (← `(tactic| contradiction))
 
   | leftWeaken i => do
-    let formula := proofstep.antecedents[i]!
-    match multiMapGet antecedentNames formula with
+    match antecedentIndex[i]? with
     | some hypName =>
       evalTactic (← `(tactic| clear $(mkIdent hypName)))
-      antecedentNames := multiMapRemove antecedentNames formula hypName
+      antecedentIndex := antecedentIndex.eraseIdx i
     | none => throwError "applyProofStep: leftWeaken: cannot find antecedent"
 
   | rightWeaken i => do
@@ -731,11 +734,11 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | cut i => do
     let formula := premisesProofstep[0]!.consequents[i]!
     haveExpr psName formula
-    antecedentNames := multiMapInsert antecedentNames formula psName
-
+    -- antecedentNames := multiMapInsert antecedentNames formula psName
+    antecedentIndex := antecedentIndex.cons psName
   | leftAnd i => do
     let formula := proofstep.antecedents[i]!
-    match multiMapGet antecedentNames formula with
+    match antecedentIndex[i]? with
     | some hypName =>
       let hypName1 := Name.str hypName "1"
       let hypName2 := Name.str hypName "2"
@@ -743,6 +746,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       antecedentNames := antecedentNames.erase formula
       -- TODO: missing formulas for A and B separately
       -- antecedentNames := antecedentNames.insert proofstep.name hypName.1
+      antecedentIndex := [hypName1, hypName2] ++ antecedentIndex
     | none => throwError s!"applyProofStep: leftAnd: cannot find antecedent `{formula}`"
 
   | leftOr i => do
@@ -761,11 +765,9 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| sorry))
 
   | leftForall i t => do
-    match multiMapGet antecedentNames proofstep.antecedents[i]! with
+    match antecedentIndex[i]? with
     | some hypName =>
-      let paramExpr := Expr.app (Expr.const hypName []) t
-      let newHypExpr ← evalSpecialize paramExpr
-      antecedentNames := multiMapInsert antecedentNames newHypExpr hypName
+      evalSpecialize hypName t
     | none => throwError s!"applyProofStep: leftForall: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | rightAnd i => do
@@ -793,10 +795,10 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | rightSubstEq i predShape => do
     -- TODO: partial implementation
-    let formula := proofstep.antecedents[i]!
-    match multiMapGet antecedentNames formula with
-    | some hypName => evalTactic (← `(tactic| first | apply Eq.subst $(mkIdent hypName) | apply Eq.subst $(mkIdent hypName).symm))
-    | none => throwError s!"applyProofstep: rightSubstEq: cannot find corresponding hypothesis to antecedent `{formula}` in the context"
+    -- let formula := proofstep.antecedents[i]!
+    match antecedentIndex[i]? with
+    | some hypName => evalTactic (← `(tactic| first | apply Eq.subst $(mkIdent hypName) | apply Eq.subst $(mkIdent hypName).symm | rw [$(mkIdent hypName):term] | rw [←$(mkIdent hypName):term]))
+    | none => throwError s!"applyProofstep: rightSubstEq: cannot find corresponding hypothesis to antecedent form in the context"
 
   | leftSubstEq i predShape => do
     evalTactic (← `(tactic| sorry))
@@ -813,11 +815,12 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | instPred predName formulaStr args => do
     evalTactic (← `(tactic| sorry))
 
-  pure antecedentNames
+  pure (antecedentNames, antecedentIndex)
 
 partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
   (proofStepNameToIndex : Std.HashMap String Nat)
   (antecedentNames : MultiMap Expr Name := .empty)
+  (antecedentIndex : List Name := .nil)
 : TacticM Unit := do
   if proofsteps.size != 0 then
     let proofstep := proofsteps[proofsteps.size - 1]!
@@ -825,9 +828,9 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
     trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
-    let antecedentNames ← applyProofStep proofstep premisesProofstep.toArray antecedentNames
+    let (antecedentNames, antecedentIndex) ← applyProofStep proofstep premisesProofstep.toArray antecedentNames antecedentIndex
     for premise in premises do
-      reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex antecedentNames
+      reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex antecedentNames antecedentIndex
 
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
@@ -933,11 +936,11 @@ set_option auto.mono.mode "fol"
 -- example (h : False) : A = A := by
 --   exfalso; assumption
 
--- example (α : Type) (sf : α -> α) (cemptySet : α)
---   (h1 : ∀ x, x = sf (sf (sf x)))
---   (h2 : ∀ x, x = sf (sf x)) :
---   cemptySet = sf cemptySet := by
---   egg
+example (α : Type) (sf : α -> α) (cemptySet : α)
+  (h1 : ∀ x, x = sf (sf (sf x)))
+  (h2 : ∀ x, x = sf (sf x)) :
+  cemptySet = sf cemptySet := by
+  egg
 
 -- theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
 --   (h1 : ∀ x, x = sf (sf (sf x)))

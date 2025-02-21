@@ -1093,7 +1093,7 @@ inductive InferenceRule where
   | rightRelIff   (i : Nat)
   | rightSubstMulti (i : List Nat) (P : Expr) (vars : List String)
   | leftSubstMulti (i : List Nat) (P : Expr) (vars : List String)
-  | rightSubstEqualForallLocal (i : Nat) (R : Expr) (Z : Expr)
+  | rightSubstEqForallLocal (i : Nat) (R : Expr) (Z : Expr)
   | rightSubstEqForall (i : Nat) (R : Expr) (Z : Expr)
   | rightSubstIffForallLocal (i : Nat) (R : Expr) (Z : Expr)
   | rightSubstIffForall (i : Nat) (R : Expr) (Z : Expr)
@@ -1152,7 +1152,7 @@ def InferenceRule.toString : InferenceRule → String
   | rightRelIff i       => s!"rightRelIff {i}"
   | rightSubstMulti i P vars => s!"rightSubstMulti {i} {P} {vars}"
   | leftSubstMulti i P vars => s!"leftSubstMulti {i} {P} {vars}"
-  | rightSubstEqualForallLocal i R Z => s!"rightSubstEqualForallLocal {i} {R} {Z}"
+  | rightSubstEqForallLocal i R Z => s!"rightSubstEqualForallLocal {i} {R} {Z}"
   | rightSubstEqForall i R Z => s!"rightSubstEqForall {i} {R} {Z}"
   | rightSubstIffForallLocal i R Z => s!"rightSubstIffForallLocal {i} {R} {Z}"
   | rightSubstIffForall i R Z => s!"rightSubstIffForall {i} {R} {Z}"
@@ -1289,8 +1289,8 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
       let rule : InferenceRule ←
         match ruleName with
         -- Level 1
-        | "rightTrue"    => pure (rightTrue (parseNat params[0]!))
         | "leftFalse"    => pure (leftFalse (parseNat params[0]!))
+        | "rightTrue"    => pure (rightTrue (parseNat params[0]!))
         | "hyp"          => pure (hyp (parseNat (params[0]!)))
         | "leftWeaken"   => pure (leftWeaken (parseNat params[0]!))
         | "rightWeaken"  => pure (rightWeaken (parseNat params[0]!))
@@ -1334,7 +1334,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
         | "rightRelIff"  => pure (rightRelIff (parseNat params[0]!))
         | "rightSubstMulti" => pure (rightSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
         | "leftSubstMulti" => pure (leftSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
-        | "rightSubstEqualForallLocal" => pure (rightSubstEqualForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightSubstEqForallLocal" => pure (rightSubstEqForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
         | "rightSubstEqForall" => pure (rightSubstEqForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
         | "rightSubstIffForallLocal" => pure (rightSubstIffForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
         | "rightSubstIffForall" => pure (rightSubstIffForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))

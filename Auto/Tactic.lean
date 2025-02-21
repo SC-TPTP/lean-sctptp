@@ -716,10 +716,10 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   let mut antecedentIndex := antecedentIndex
   let psName := (Name.str .anonymous proofstep.name)
   match proofstep.rule with
-  | rightTrue _ => do evalTactic (← `(tactic| exact True.intro))
+  -- Level 1
   | leftFalse _ => do evalTactic (← `(tactic| exfalso; assumption))
+  | rightTrue _ => do evalTactic (← `(tactic| exact True.intro))
   | hyp _       => do evalTactic (← `(tactic| assumption))
-  | leftHyp _ _ => do evalTactic (← `(tactic| contradiction))
 
   | leftWeaken i => do
     match antecedentIndex[i]? with
@@ -756,8 +756,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       -- antecedentIndex := antecedentIndex.cons hypName2
     | none => throwError s!"applyProofStep: leftOr: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
-  | leftImplies i => do
-    evalTactic (← `(tactic| sorry))
+  | leftImplies i => do evalTactic (← `(tactic| sorry))
 
   | leftIff i => do
     match antecedentIndex[i]? with
@@ -773,13 +772,14 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     | some hypName => evalTactic (← `(tactic| exfalso; apply $(mkIdent hypName):ident))
     | none => throwError s!"applyProofstep: leftNot: cannot find corresponding hypothesis to antecedent form in the context"
 
-  | leftEx i varName => do
-    evalTactic (← `(tactic| sorry))
+  | leftEx i varName => do evalTactic (← `(tactic| sorry))
 
   | leftForall i t => do
     match antecedentIndex[i]? with
     | some hypName =>
-      evalSpecialize hypName t
+      match t with
+      | .bvar 0 => evalTactic (← `(tactic| specialize $(mkIdent hypName) ‹_›))
+      | _ => evalSpecialize hypName t
     | none => throwError s!"applyProofStep: leftForall: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | rightAnd _ => do evalTactic (← `(tactic| constructor))
@@ -827,13 +827,36 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     -- TODO: missing position of the hypothesis
     evalTactic (← `(tactic| sorry))
 
-  | instFun funName termStr args => do
-    evalTactic (← `(tactic| sorry))
+  | instFun funName termStr args => do evalTactic (← `(tactic| sorry))
+  | instPred predName formulaStr args => do evalTactic (← `(tactic| sorry))
+  | rightEpsilon A X t => do evalTactic (← `(tactic| sorry))
+  | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
 
-  | instPred predName formulaStr args => do
-    evalTactic (← `(tactic| sorry))
+  -- Level 2
+  | congruence => do evalTactic (← `(tactic| repeat trivial))
+  | leftHyp _ _ => do evalTactic (← `(tactic| contradiction))
+  | leftNotAnd i => do evalTactic (← `(tactic| sorry))
+  | leftNotOr i => do evalTactic (← `(tactic| sorry))
+  | leftNotImplies i => do evalTactic (← `(tactic| sorry))
+  | leftNotIff i => do evalTactic (← `(tactic| sorry))
+  | leftNotNot i => do evalTactic (← `(tactic| sorry))
+  | leftNotEx i t => do evalTactic (← `(tactic| sorry))
+  | leftNotAll i t => do evalTactic (← `(tactic| sorry))
 
-  | _ => do evalTactic (← `(tactic| sorry))
+  -- Level 3
+  | rightRelIff i => do evalTactic (← `(tactic| trivial))
+  | rightSubstMulti i P vars => do evalTactic (← `(tactic| sorry))
+  | leftSubstMulti i P vars => do evalTactic (← `(tactic| sorry))
+  | rightSubstEqForallLocal i R Z => do evalTactic (← `(tactic| sorry))
+  | rightSubstEqForall i R Z => do evalTactic (← `(tactic| sorry))
+  | rightSubstIffForallLocal i R Z => do evalTactic (← `(tactic| sorry))
+  | rightSubstIffForall i R Z => do evalTactic (← `(tactic| sorry))
+  | rightNnf i => do evalTactic (← `(tactic| sorry))
+  | rightPrenex i => do evalTactic (← `(tactic| sorry))
+  | clausify i j => do evalTactic (← `(tactic| sorry))
+  | elimIffRefl i j => do evalTactic (← `(tactic| sorry))
+  | instMult triplets => do evalTactic (← `(tactic| sorry))
+
 
   pure (antecedentNames, antecedentIndex)
 
@@ -943,16 +966,14 @@ end Auto
 
 
 set_option auto.tptp true
-set_option auto.tptp.trust true
 set_option auto.tptp.solver.name "egg"
 set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
+set_option auto.mono.mode "fol"
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
 -- set_option trace.auto.tptp.result true
 set_option trace.auto.lamReif.printValuation true
-
-set_option auto.mono.mode "fol"
 
 
 example : A ↔ A := by

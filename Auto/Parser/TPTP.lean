@@ -1047,10 +1047,10 @@ def lamTerm2Expr (t : Embedding.Lam.LamTerm) : ReifM Expr := do
 
 
 inductive InferenceRule where
+-- Level 1
   | rightTrue     (i : Nat)
   | leftFalse     (i : Nat)
   | hyp           (i : Nat)
-  | leftHyp       (i : Nat) (j : Nat)
   | leftWeaken    (i : Nat)
   | rightWeaken   (i : Nat)
   | cut           (i : Nat)
@@ -1075,14 +1075,41 @@ inductive InferenceRule where
   | leftSubstIff  (i : Nat) (R : Expr)
   | instFun       (F : String) (t : Expr) (args : List String)
   | instPred      (P : String) (phi : Expr) (args : List String)
+  | rightEpsilon  (A : Expr) (x : String) (t : Expr)
+  | leftEpsilon   (i : Nat) (y : String)
+
+-- Level 2
+  | congruence
+  | leftHyp       (i : Nat) (j : Nat)
+  | leftNotAnd    (i : Nat)
+  | leftNotOr     (i : Nat)
+  | leftNotImplies (i : Nat)
+  | leftNotIff    (i : Nat)
+  | leftNotNot    (i : Nat)
+  | leftNotEx     (i : Nat) (t : Expr)
+  | leftNotAll    (i : Nat) (y : String)
+
+-- Level 3
+  | rightRelIff   (i : Nat)
+  | rightSubstMulti (i : List Nat) (P : Expr) (vars : List String)
+  | leftSubstMulti (i : List Nat) (P : Expr) (vars : List String)
+  | rightSubstEqualForallLocal (i : Nat) (R : Expr) (Z : Expr)
+  | rightSubstEqForall (i : Nat) (R : Expr) (Z : Expr)
+  | rightSubstIffForallLocal (i : Nat) (R : Expr) (Z : Expr)
+  | rightSubstIffForall (i : Nat) (R : Expr) (Z : Expr)
+  | rightNnf (i : Nat)
+  | rightPrenex (i : Nat)
+  | clausify (i : Nat) (j : Nat)
+  | elimIffRefl (i : Nat) (j : Nat)
+  | instMult (args : List (String × Expr × List String))
 deriving Inhabited, Repr
 
 open InferenceRule in
 def InferenceRule.toString : InferenceRule → String
+-- Level 1
   | rightTrue i         => s!"rightTrue {i}"
   | leftFalse i         => s!"leftFalse {i}"
   | hyp i               => s!"hyp {i}"
-  | leftHyp i j         => s!"leftHyp {i} {j}"
   | leftWeaken i        => s!"leftWeaken {i}"
   | rightWeaken i       => s!"rightWeaken {i}"
   | cut i               => s!"cut {i}"
@@ -1107,6 +1134,35 @@ def InferenceRule.toString : InferenceRule → String
   | leftSubstIff i R    => s!"leftSubstIff {i} {R}"
   | instFun F t args    => s!"instFun {F} {t} {args}"
   | instPred P phi args => s!"instPred {P} {phi} {args}"
+  | rightEpsilon A x t => s!"rightEpsilon {A} {x} {t}"
+  | leftEpsilon i y     => s!"leftEpsilon {i} {y}"
+
+-- Level 2
+  | congruence          => "congruence"
+  | leftHyp i j         => s!"leftHyp {i} {j}"
+  | leftNotAnd i        => s!"leftNotAnd {i}"
+  | leftNotOr i         => s!"leftNotOr {i}"
+  | leftNotImplies i    => s!"leftNotImplies {i}"
+  | leftNotIff i        => s!"leftNotIff {i}"
+  | leftNotNot i        => s!"leftNotNot {i}"
+  | leftNotEx i t       => s!"leftNotEx {i} {t}"
+  | leftNotAll i y      => s!"leftNotAll {i} {y}"
+
+-- Level 3
+  | rightRelIff i       => s!"rightRelIff {i}"
+  | rightSubstMulti i P vars => s!"rightSubstMulti {i} {P} {vars}"
+  | leftSubstMulti i P vars => s!"leftSubstMulti {i} {P} {vars}"
+  | rightSubstEqualForallLocal i R Z => s!"rightSubstEqualForallLocal {i} {R} {Z}"
+  | rightSubstEqForall i R Z => s!"rightSubstEqForall {i} {R} {Z}"
+  | rightSubstIffForallLocal i R Z => s!"rightSubstIffForallLocal {i} {R} {Z}"
+  | rightSubstIffForall i R Z => s!"rightSubstIffForall {i} {R} {Z}"
+  | rightNnf i          => s!"rightNnf {i}"
+  | rightPrenex i       => s!"rightPrenex {i}"
+  | clausify i j        => s!"clausify {i} {j}"
+  | elimIffRefl i j     => s!"elimIffRefl {i} {j}"
+  | instMult args       =>
+    let argsStr := String.intercalate ", " (args.map fun (x, y, z) => s!"{x}:({y}, [{String.intercalate ", " z}])")
+    s!"instMult [{argsStr}]"
 
 instance : ToString InferenceRule where
   toString := InferenceRule.toString
@@ -1121,6 +1177,21 @@ def parseNat (pt : Term) : Nat :=
     | none   => panic! "parseNat: not a valid numeral"
   | _ => panic! "parseNat: unexpected term format"
 
+def parseListNat (pt : Term) : List Nat :=
+  match pt with
+  | Term.mk (Token.ident "list") args =>
+    args.map fun arg =>
+      match arg with
+      | Term.mk (Token.ident s) _ =>
+        match s.toNat? with
+        | some n => n
+        | none   => panic! s!"parseListNat: not a valid numeral: {s}"
+      | _ => panic! s!"parseListNat: unexpected term format: {arg}"
+  | Term.mk (Token.ident s) _ =>
+    match s.toNat? with
+    | some n => [n]
+    | none   => panic! s!"parseListNat: not a valid numeral: {s}"
+  | _ => panic! s!"parseListNat: unexpected term format: {pt}"
 
 def parseParamString (pt : Term) : String :=
   match pt with
@@ -1148,6 +1219,31 @@ def InferenceRecord.toString : InferenceRecord → String
 instance : ToString InferenceRecord where
   toString := InferenceRecord.toString
 
+def extractFotTerm (pi : ParsingInfo) (pt : Term) : LamReif.ReifM Expr :=
+  match pt with
+  | Term.mk (Token.ident "$fot") [inner] =>
+    match term2LamTermSCTPTP pi inner with
+    | .term _ t => lamTerm2Expr t
+    | other     => panic! s!"Expected a term from $fot but got {other}"
+  | _ => panic! s!"Expected $fot pattern, got {pt}"
+
+def extractFofTerm (pi : ParsingInfo) (pt : Term) : LamReif.ReifM Expr :=
+  match pt with
+  | Term.mk (Token.ident "$fof") [inner] =>
+    match term2LamTermSCTPTP pi inner with
+    | .term _ t => lamTerm2Expr t
+    | other     => panic! s!"Expected a term from $fof but got {other}"
+  | _ => panic! s!"Expected $fof pattern, got {pt}"
+
+def extractFofLambdaTerm (pi : ParsingInfo) (pt : Term) (var : String): LamReif.ReifM Expr :=
+  match pt with
+  | Term.mk (Token.ident "$fof") [inner] =>
+    let inner := ⟨.op "^", inner :: (Term.mk (Token.ident var) []) :: []⟩
+    match term2LamTermSCTPTP pi inner with
+    | .term _ t => lamTerm2Expr t
+    | a => panic! s!"rightSubstEq: expected a term but got `{a}` -- Original term `{inner}`"
+  | _ => panic! s!"rightSubstEq: expected a term but got {pt}"
+
 open Embedding.Lam InferenceRule in
 def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
   let lamVarTy := (← LamReif.getVarVal).map Prod.snd
@@ -1172,10 +1268,8 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
               args
             else
               panic! s!"parseInferenceRecord: Expected status(thm) but got status({statusArg})"
-          | _ =>
-            panic! "parseInferenceRecord: Expected first element of paramTerm to be status(thm)"
-        | _ =>
-          panic! "parseInferenceRecord: Expected paramTerm to be a list (i.e. parsed from square brackets)"
+          | _ => panic! "parseInferenceRecord: Expected first element of paramTerm to be status(thm)"
+        | _ => panic! "parseInferenceRecord: Expected paramTerm to be a list (i.e. parsed from square brackets)"
 
       let premises : List String :=
         match premisesTerm with
@@ -1194,15 +1288,10 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
 
       let rule : InferenceRule ←
         match ruleName with
+        -- Level 1
         | "rightTrue"    => pure (rightTrue (parseNat params[0]!))
         | "leftFalse"    => pure (leftFalse (parseNat params[0]!))
-        | "hyp"          =>
-            let i := parseNat (params[0]!)
-            pure (hyp i)
-        | "leftHyp"      =>
-            let i := parseNat (params[0]!)
-            let j := parseNat (params[1]!)
-            pure (leftHyp i j)
+        | "hyp"          => pure (hyp (parseNat (params[0]!)))
         | "leftWeaken"   => pure (leftWeaken (parseNat params[0]!))
         | "rightWeaken"  => pure (rightWeaken (parseNat params[0]!))
         | "cut"          => pure (cut (parseNat params[0]!))
@@ -1211,128 +1300,49 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
         | "leftImplies"  => pure (leftImplies (parseNat params[0]!))
         | "leftIff"      => pure (leftIff (parseNat params[0]!))
         | "leftNot"      => pure (leftNot (parseNat params[0]!))
-        | "leftEx"       =>
-            let i := parseNat (params[0]!)
-            let y := parseParamString (params[1]!)
-            pure (leftEx i y)
-        | "leftForall"      =>
-            let i := parseNat (params[0]!)
-            match params[1]! with
-            | Term.mk (Token.ident "$fot") (paramTerm1 :: []) =>
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ t => pure (leftForall i (← lamTerm2Expr t))
-              | _ =>
-                -- instantiate leftForall with a hole as expression
-                -- pure (leftForall i .unknown)
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
-                panic! s!"leftForall: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"leftForall: expected a term but got {params[1]!}"
+        | "leftEx"       => pure (leftEx (parseNat (params[0]!)) (parseParamString (params[1]!)))
+        | "leftForall"   => pure (leftForall (parseNat (params[0]!)) (← extractFotTerm pi params[1]!))
         | "rightAnd"     => pure (rightAnd (parseNat params[0]!))
         | "rightOr"      => pure (rightOr (parseNat params[0]!))
         | "rightImplies" => pure (rightImplies (parseNat params[0]!))
         | "rightIff"     => pure (rightIff (parseNat params[0]!))
         | "rightNot"     => pure (rightNot (parseNat params[0]!))
-        | "rightEx"      =>
-            let i := parseNat (params[0]!)
-            match params[1]! with
-            | Term.mk (Token.ident "$fot") (paramTerm1 :: []) =>
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ t => pure (rightEx i (← lamTerm2Expr t))
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
-                panic! s!"rightEx: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"rightEx: expected a term but got {params[1]!}"
-        | "rightForall"     =>
-            let i := parseNat (params[0]!)
-            let y := parseParamString (params[1]!)
-            pure (rightForall i y)
+        | "rightEx"      => pure (rightEx (parseNat (params[0]!)) (← extractFotTerm pi params[1]!))
+        | "rightForall"  => pure (rightForall (parseNat (params[0]!)) (parseParamString (params[1]!)))
         | "rightRefl"    => pure (rightRefl (parseNat params[0]!))
-        | "rightSubstEq"   =>
-            let i := parseNat (params[0]!)
-            let Z := parseParamString (params[2]!)
-            match params[1]! with
-            | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
-              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ P => pure (rightSubstEq i (← lamTerm2Expr P))
-              | a@_ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}`"
-                panic! s!"rightSubstEq: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"rightSubstEq: expected a term but got {params[1]!}"
-        | "leftSubstEq"    =>
-            let i := parseNat (params[0]!)
-            let Z := parseParamString (params[2]!)
-            match params[1]! with
-            | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
-              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ t => pure (leftSubstEq i (← lamTerm2Expr t))
-              | a@_ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}`"
-                panic! s!"leftSubst: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"leftSubst: expected a term but got {params[1]!}"
-        | "rightSubstIff"  =>
-            let i := parseNat (params[0]!)
-            let Z := parseParamString (params[2]!)
-            match params[1]! with
-            | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
-              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ R => pure (rightSubstIff i (← lamTerm2Expr R))
-              | a@_ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}`"
-                panic! s!"rightSubstIff: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"rightSubstIff: expected a term but got {params[1]!}"
-        | "leftSubstIff"   =>
-            let i := parseNat (params[0]!)
-            let Z := parseParamString (params[2]!)
-            match params[1]! with
-            | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
-              let paramTerm1 := ⟨.op "^", paramTerm1 :: (Term.mk (Token.ident Z) []) :: []⟩
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ R => pure (leftSubstIff i (← lamTerm2Expr R))
-              | a@_ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got `{a}` -- Original term `{paramTerm1}`"
-                panic! s!"leftSubstIff: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"leftSubstIff: expected a term but got {params[1]!}"
-        | "instFun"      =>
-            let F := parseParamString params[0]!
-            let argsList := parseListString params[2]!
-            match params[1]! with
-            | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ t => pure (instFun F (← lamTerm2Expr t) argsList)
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
-                panic! s!"instFun: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"instFun: expected a term but got {params[1]!}"
-        | "instPred"     =>
-            let P := parseParamString params[0]!
-            let argsList := parseListString params[2]!
-            match params[1]! with
-            | Term.mk (Token.ident "$fof") (paramTerm1 :: []) =>
-              match term2LamTermSCTPTP pi paramTerm1 with
-              | .term _ phi => pure (instPred P (← lamTerm2Expr phi) argsList)
-              | _ =>
-                trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {paramTerm1}"
-                panic! s!"instFun: expected a term but got {paramTerm1}"
-            | _ =>
-              trace[auto.tptp.printProof] s!"parseInferenceRecord: expected a term but got {params[1]!}"
-              panic! s!"instFun: expected a term but got {params[1]!}"
+        | "rightSubstEq" => pure (rightSubstEq (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
+        | "leftSubstEq"  => pure (leftSubstEq (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
+        | "rightSubstIff" => pure (rightSubstIff (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
+        | "leftSubstIff"  => pure (leftSubstIff (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
+        | "instFun"       => pure (instFun (parseParamString params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
+        | "instPred"      => pure (instPred (parseParamString params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
+        | "rightEpsilon"  => pure (rightEpsilon (← extractFofTerm pi params[0]!) (parseParamString params[1]!) (← extractFofTerm pi params[2]!))
+        | "leftEpsilon"   => pure (leftEpsilon (parseNat params[0]!) (parseParamString params[1]!))
+
+        -- Level 2
+        | "congruence"   => pure congruence
+        | "leftHyp"      => pure (leftHyp (parseNat (params[0]!)) (parseNat (params[1]!)))
+        | "leftNotAnd"   => pure (leftNotAnd (parseNat params[0]!))
+        | "leftNotOr"    => pure (leftNotOr (parseNat params[0]!))
+        | "leftNotImplies" => pure (leftNotImplies (parseNat params[0]!))
+        | "leftNotIff"   => pure (leftNotIff (parseNat params[0]!))
+        | "leftNotNot"   => pure (leftNotNot (parseNat params[0]!))
+        | "leftNotEx"    => pure (leftNotEx (parseNat (params[0]!)) (← extractFotTerm pi params[1]!))
+        | "leftNotAll"   => pure (leftNotAll (parseNat (params[0]!)) (parseParamString (params[1]!)))
+
+        -- Level 3
+        | "rightRelIff"  => pure (rightRelIff (parseNat params[0]!))
+        | "rightSubstMulti" => pure (rightSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
+        | "leftSubstMulti" => pure (leftSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
+        | "rightSubstEqualForallLocal" => pure (rightSubstEqualForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightSubstEqForall" => pure (rightSubstEqForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightSubstIffForallLocal" => pure (rightSubstIffForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightSubstIffForall" => pure (rightSubstIffForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightNnf" => pure (rightNnf (parseNat params[0]!))
+        | "rightPrenex" => pure (rightPrenex (parseNat params[0]!))
+        | "clausify" => pure (clausify (parseNat params[0]!) (parseNat params[1]!))
+        | "elimIffRefl"  => pure (elimIffRefl (parseNat (params[0]!)) (parseNat (params[1]!)))
+        | "instMult"     => panic! "instMult not implemented"
         | _ =>
           trace[auto.tptp.printProof] s!"parseInferenceRecord: unknown rule '{ruleName}'"
           panic! s!"parseInferenceRecord: unknown rule '{ruleName}'"
@@ -1376,29 +1386,6 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
         -- ### Reifing the sequent
         let (antecedents, consequents) ← match sequent with
           | ⟨.op "-->", antecedents :: consequents :: []⟩ =>
-            -- trace[auto.tptp.printProof] s!"Antecedents (tokens): {termTreeString antecedents}"
-            -- trace[auto.tptp.printProof] s!"Consequents (tokens): {termTreeString consequents}"
-
-            -- -- Temporary for debugging
-            -- match antecedents with
-            -- | ⟨.ident "list", antecedents⟩ =>
-            --   for a in antecedents do
-            --     match term2LamTermSCTPTP pi a with
-            --     | .term (.base .prop) t => let _ ← (lamTerm2Expr t)
-            --     | .error e => trace[auto.tptp.printProof] e
-            --     | lc => trace[auto.tptp.printProof] s!"Unexpected LamConstr {lc}, expected term"
-            -- | _ => trace[auto.tptp.printProof] "Expected list of antecedents"
-
-            -- -- Temporary for debugging
-            -- match consequents with
-            -- | ⟨.ident "list", consequents⟩ =>
-            --   for a in consequents do
-            --     match term2LamTermSCTPTP pi a with
-            --     | .term (.base .prop) t => let _ ← (lamTerm2Expr t)
-            --     | .error e => trace[auto.tptp.printProof] e
-            --     | lc => trace[auto.tptp.printProof] s!"Unexpected LamConstr {lc}, expected term"
-            -- | _ => trace[auto.tptp.printProof] "Expected list of consequents"
-
             -- antecedents and consequents are lists of formulas
             let antecedents := match antecedents with
             | ⟨.ident "list", antecedents⟩ =>
@@ -1416,14 +1403,9 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
                 | .error e => panic! e
                 | lc => panic! s!"Unexpected LamConstr {lc}, expected term"
             | _ => panic! "Expected list of consequents"
-            -- print method is `LamTerm.toStringLCtx` in `LamBVarOp.lean`
-            -- trace[auto.tptp.printProof] s!"Antecedents (parsed): {antecedents}"
-            -- trace[auto.tptp.printProof] s!"Consequents (parsed): {consequents}"
 
             let antecedents ← antecedents.mapM (lamTerm2Expr ·)
             let consequents ← consequents.mapM (lamTerm2Expr ·)
-            -- trace[auto.tptp.printProof] s!"Antecedents (reified): {antecedents}"
-            -- trace[auto.tptp.printProof] s!"Consequents (reified): {consequents}"
 
             pure (antecedents, consequents)
           | _ => throwError s!"Unexpected number of formulas in sequent: {sequent}"
@@ -1446,41 +1428,5 @@ fof(a1, axiom, (! [X0] : (! [X1] : (X0 = app(t_a0, app(t_a0, X0)))))).
 fof(c, conjecture, (t_a1 = app(t_a0, t_a1)))."
 
 #eval parse "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(thm), 'X', $fot(b), []], [a1]))."
-
-
-
--- def runParseInferenceRecord (code: String): IO Unit := do
---   let cmds ← parse code
---   match cmds.get? 0 with
---   | none =>
---     IO.println "No command found"
---   | some cmd =>
---     if cmd.args.length < 4 then
---       IO.println "No inference record found in the command"
---     else
---       let infRecTerm := cmd.args[3]!
---       println! "Inference record term: {infRecTerm}"
---       let infRec    := parseInferenceRecord infRecTerm
---       IO.println s!"Parsed inference record: {infRec}"
-
--- #eval runParseInferenceRecord "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(thm), 'X', $fot(b), []], [a1]))."
-
--- #eval runParseInferenceRecord "fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2]))."
-
--- #eval runParseInferenceRecord "fof(f3, plain, [q(f(b)), q(g(f(b), f(f(b))))] --> [q(g(f(f(b), Y)))], inference(instFun, [status(thm), 'X', $fot(f(b)), []], [a3]))."
-
-
--- #eval runParseInferenceRecord "fof(f4, plain, [![Z] : q(g(Z, f(f(X))))] --> [q(g(f(X, f(X))))], inference(instFun, [status(thm), 'Y', $fot(f(X)), []], [a4]))."
-
--- #eval runParseInferenceRecord "fof(f5, plain, [![Y] : q(g(Y, f(f(X))))] --> [q(g(f(X, f(X))))], inference(instFun, [status(thm), 'Y', $fot(f(X)), []], [a5]))."
-
--- #eval runParseInferenceRecord "fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6]))."
-
--- #eval runParseInferenceRecord "fof(f7, plain, [q(g(F(f(c)), F(F(X))))] --> [], inference(instFun, [status(thm), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a7]))."
-
--- #eval runParseInferenceRecord "fof(f8, plain, [![X] : q(g(F(f(c)), F(F(X))))] --> [], inference(instFun, [status(thm), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a8]))."
-
-
--- #eval runParseInferenceRecord "fof(f9, plain, [![X] : q(g(F(f(c)), F(F(X))))] --> [?[Y] : q(g(F(f(Y)), F(F(b))))], inference(instFun, [status(thm), 'G', $fot(g(F(Y), F(F(X)))), ['X', 'Y']], [a9]))."
 
 end TPTP

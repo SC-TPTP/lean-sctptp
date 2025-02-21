@@ -833,6 +833,8 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | instPred predName formulaStr args => do
     evalTactic (← `(tactic| sorry))
 
+  | _ => do evalTactic (← `(tactic| sorry))
+
   pure (antecedentNames, antecedentIndex)
 
 partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)

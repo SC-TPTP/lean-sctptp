@@ -693,7 +693,7 @@ open Meta in
 def evalSpecialize (n : Name) (e : Expr) : TacticM Unit := withMainContext do
   -- let (e, mvarIds') ← elabTermWithHoles e none `specialize (allowNaturalHoles := true)
   let lctx ← getLCtx
-  let .some localDecl := lctx.findFromUserName? n 
+  let .some localDecl := lctx.findFromUserName? n
     | throwError m!"{decl_name%} : Could not find {n} in context"
   let applied := .app (.fvar localDecl.fvarId) e
   let mvarId ← (← getMainGoal).assert localDecl.userName (← inferType applied).headBeta applied
@@ -728,38 +728,50 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       antecedentIndex := antecedentIndex.eraseIdx i
     | none => throwError "applyProofStep: leftWeaken: cannot find antecedent"
 
-  | rightWeaken i => do
-    evalTactic (← `(tactic| sorry))
+  | rightWeaken _ => do evalTactic (← `(tactic| exfalso))
 
   | cut i => do
     let formula := premisesProofstep[0]!.consequents[i]!
     haveExpr psName formula
     -- antecedentNames := multiMapInsert antecedentNames formula psName
     antecedentIndex := antecedentIndex.cons psName
+
   | leftAnd i => do
-    let formula := proofstep.antecedents[i]!
+    -- TODO: not sure
     match antecedentIndex[i]? with
     | some hypName =>
       let hypName1 := Name.str hypName "1"
       let hypName2 := Name.str hypName "2"
-      -- evalTactic (← `(tactic| cases $(mkIdent hypName); rename_i $(mkIdent hypName1) $(mkIdent hypName2)))
-      antecedentNames := antecedentNames.erase formula
-      -- TODO: missing formulas for A and B separately
-      -- antecedentNames := antecedentNames.insert proofstep.name hypName.1
+      evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
       antecedentIndex := [hypName1, hypName2] ++ antecedentIndex
-    | none => throwError s!"applyProofStep: leftAnd: cannot find antecedent `{formula}`"
+    | none => throwError s!"applyProofStep: leftAnd: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | leftOr i => do
-    evalTactic (← `(tactic| sorry))
+    match antecedentIndex[i]? with
+    | some hypName =>
+      evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent hypName):ident))
+      -- TODO: update antecedentIndex?
+      -- antecedentIndex := antecedentIndex.eraseIdx i
+      -- antecedentIndex := antecedentIndex.cons hypName1
+      -- antecedentIndex := antecedentIndex.cons hypName2
+    | none => throwError s!"applyProofStep: leftOr: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | leftImplies i => do
     evalTactic (← `(tactic| sorry))
 
   | leftIff i => do
-    evalTactic (← `(tactic| sorry))
+    match antecedentIndex[i]? with
+    | some hypName =>
+      let hypName1 := Name.str hypName "1"
+      let hypName2 := Name.str hypName "2"
+      evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
+      antecedentIndex := [hypName1, hypName2] ++ antecedentIndex
+    | none => throwError s!"applyProofStep: leftIff: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | leftNot i => do
-    evalTactic (← `(tactic| sorry))
+    match antecedentIndex[i]? with
+    | some hypName => evalTactic (← `(tactic| exfalso; apply $(mkIdent hypName):ident))
+    | none => throwError s!"applyProofstep: leftNot: cannot find corresponding hypothesis to antecedent form in the context"
 
   | leftEx i varName => do
     evalTactic (← `(tactic| sorry))
@@ -770,43 +782,49 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       evalSpecialize hypName t
     | none => throwError s!"applyProofStep: leftForall: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
-  | rightAnd i => do
-    evalTactic (← `(tactic| sorry))
+  | rightAnd _ => do evalTactic (← `(tactic| constructor))
+  | rightOr _ => do evalTactic (← `(tactic| left))
 
-  | rightOr i => do
-    evalTactic (← `(tactic| sorry))
+  | rightImplies _ => do
+    evalTactic (← `(tactic| intro $(mkIdent psName):ident))
+    antecedentIndex := antecedentIndex.cons psName
 
-  | rightImplies i => do
-    evalTactic (← `(tactic| sorry))
+  | rightIff _ => do evalTactic (← `(tactic| apply Iff.intro))
 
-  | rightIff i => do
-    evalTactic (← `(tactic| sorry))
-
-  | rightNot i => do
-    evalTactic (← `(tactic| sorry))
+  | rightNot _ => do
+    evalTactic (← `(tactic| intro $(mkIdent psName):ident))
+    antecedentIndex := antecedentIndex.cons psName
 
   | rightEx i varName => do
+    -- see `exists` and `refine` tactic implementations
     evalTactic (← `(tactic| sorry))
 
-  | rightForall i varName => do
-    evalTactic (← `(tactic| sorry))
-
+  | rightForall _ varName => do evalTactic (← `(tactic| intro $(mkIdent (.str .anonymous varName)):ident))
   | rightRefl _ => do evalTactic (← `(tactic| rfl))
 
   | rightSubstEq i predShape => do
-    -- TODO: partial implementation
+    -- TODO: partial implementation, predShape is not used
     -- let formula := proofstep.antecedents[i]!
     match antecedentIndex[i]? with
     | some hypName => evalTactic (← `(tactic| first | apply Eq.subst $(mkIdent hypName) | apply Eq.subst $(mkIdent hypName).symm | rw [$(mkIdent hypName):term] | rw [←$(mkIdent hypName):term]))
     | none => throwError s!"applyProofstep: rightSubstEq: cannot find corresponding hypothesis to antecedent form in the context"
 
   | leftSubstEq i predShape => do
+    -- TODO: partial implementation, predShape is not used
+    -- TODO: missing position of the hypothesis
     evalTactic (← `(tactic| sorry))
+    -- match antecedentIndex[i]? with
+    -- | some hypName => evalTactic (← `(tactic| first | rw [$(mkIdent hypName):term] | rw [←$(mkIdent hypName):term]))
+    -- | none => throwError s!"applyProofstep: leftSubstEq: cannot find corresponding hypothesis to antecedent form in the context"
 
   | rightSubstIff i predShape => do
-    evalTactic (← `(tactic| sorry))
+    -- TODO: partial implementation, predShape is not used
+    match antecedentIndex[i]? with
+    | some hypName => evalTactic (← `(tactic| first | apply Iff.subst $(mkIdent hypName) | apply Iff.subst $(mkIdent hypName).symm | rw [$(mkIdent hypName):term] | rw [←$(mkIdent hypName):term]))
+    | none => throwError s!"applyProofstep: rightSubstIff: cannot find corresponding hypothesis to antecedent form in the context"
 
   | leftSubstIff i predShape => do
+    -- TODO: missing position of the hypothesis
     evalTactic (← `(tactic| sorry))
 
   | instFun funName termStr args => do
@@ -823,6 +841,10 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
   (antecedentIndex : List Name := .nil)
 : TacticM Unit := do
   if proofsteps.size != 0 then
+    -- print current goal
+    -- let currentGoal ← getMainGoal
+    -- let currentGoalType ← currentGoal.getType
+    -- trace[auto.tptp.printProof] s!"Current goal: {currentGoalType}"
     let proofstep := proofsteps[proofsteps.size - 1]!
     trace[auto.tptp.printProof] s!"  {proofstep}"
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
@@ -902,11 +924,14 @@ def evalEgg : Tactic
     for step in proofsteps do
       trace[auto.tptp.printProof] "  {step}"
 
-    let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
-    for (proofstep, i) in proofsteps.zipWithIndex do
-      proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
-    trace[auto.tptp.printProof] "Proof steps (backward):"
-    reconstructProof proofsteps proofStepNameToIndex
+    try
+      let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
+      for (proofstep, i) in proofsteps.zipWithIndex do
+        proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+      trace[auto.tptp.printProof] "Proof steps (backward):"
+      reconstructProof proofsteps proofStepNameToIndex
+    catch e =>
+      throwError "Egg found a proof, but reconstruction failed with:\n{e.toMessageData}"
   | .useSorry =>
     let proof ← Meta.mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
     newGoal.assign proof
@@ -927,14 +952,12 @@ set_option trace.auto.lamReif.printValuation true
 
 set_option auto.mono.mode "fol"
 
--- example : A = A := by
---   egg
 
--- example (h : A ∧ B) : True := by
---   cases h; rename_i h_a h_b
+example : A ↔ A := by
+  egg
 
--- example (h : False) : A = A := by
---   exfalso; assumption
+example : A = A := by
+  egg
 
 example (α : Type) (sf : α -> α) (cemptySet : α)
   (h1 : ∀ x, x = sf (sf (sf x)))
@@ -942,14 +965,14 @@ example (α : Type) (sf : α -> α) (cemptySet : α)
   cemptySet = sf cemptySet := by
   egg
 
--- theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
---   (h1 : ∀ x, x = sf (sf (sf x)))
---   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
---   cemptySet = sf cemptySet := by
---   egg
+theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
+  (h1 : ∀ x, x = sf (sf (sf x)))
+  (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
+  cemptySet = sf cemptySet := by
+  egg
 
--- theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
---   (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
---   (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
---   p (sf cemptySet) ↔ p cemptySet := by
---   egg
+theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
+  (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
+  (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
+  p (sf cemptySet) ↔ p cemptySet := by
+  egg

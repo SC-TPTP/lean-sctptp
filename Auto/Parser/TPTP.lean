@@ -1060,13 +1060,13 @@ inductive InferenceRule where
   | leftIff       (i : Nat)
   | leftNot       (i : Nat)
   | leftEx        (i : Nat) (y : String)
-  | leftForall    (i : Nat) (t : Expr)
+  | leftForall    (i : Nat) (t : Option Expr)
   | rightAnd      (i : Nat)
   | rightOr       (i : Nat)
   | rightImplies  (i : Nat)
   | rightIff      (i : Nat)
   | rightNot      (i : Nat)
-  | rightEx       (i : Nat) (t : Expr)
+  | rightEx       (i : Nat) (t : Option Expr)
   | rightForall   (i : Nat) (y : String)
   | rightRefl     (i : Nat)
   | rightSubstEq  (i : Nat) (P : Expr)
@@ -1125,7 +1125,7 @@ def InferenceRule.toString : InferenceRule → String
   | rightImplies i      => s!"rightImplies {i}"
   | rightIff i          => s!"rightIff {i}"
   | rightNot i          => s!"rightNot {i}"
-  | rightEx i y         => s!"rightEx {i} {y}"
+  | rightEx i t         => s!"rightEx {i} {t}"
   | rightForall i y     => s!"rightForall {i} {y}"
   | rightRefl i         => s!"rightRefl {i}"
   | rightSubstEq i P    => s!"rightSubstEq {i} {P}"
@@ -1227,6 +1227,14 @@ def extractFotTerm (pi : ParsingInfo) (pt : Term) : LamReif.ReifM Expr :=
     | other     => panic! s!"Expected a term from $fot but got {other}"
   | _ => panic! s!"Expected $fot pattern, got {pt}"
 
+def extractFotTermOptional (pi : ParsingInfo) (pt : Term) : LamReif.ReifM (Option Expr) :=
+  match pt with
+  | Term.mk (Token.ident "$fot") [inner] =>
+    match term2LamTermSCTPTP pi inner with
+    | .term _ t => lamTerm2Expr t
+    | _         => pure none
+  | _ => pure none
+
 def extractFofTerm (pi : ParsingInfo) (pt : Term) : LamReif.ReifM Expr :=
   match pt with
   | Term.mk (Token.ident "$fof") [inner] =>
@@ -1301,13 +1309,13 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
         | "leftIff"      => pure (leftIff (parseNat params[0]!))
         | "leftNot"      => pure (leftNot (parseNat params[0]!))
         | "leftEx"       => pure (leftEx (parseNat (params[0]!)) (parseParamString (params[1]!)))
-        | "leftForall"   => pure (leftForall (parseNat (params[0]!)) (← extractFotTerm pi params[1]!))
+        | "leftForall"   => pure (leftForall (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
         | "rightAnd"     => pure (rightAnd (parseNat params[0]!))
         | "rightOr"      => pure (rightOr (parseNat params[0]!))
         | "rightImplies" => pure (rightImplies (parseNat params[0]!))
         | "rightIff"     => pure (rightIff (parseNat params[0]!))
         | "rightNot"     => pure (rightNot (parseNat params[0]!))
-        | "rightEx"      => pure (rightEx (parseNat (params[0]!)) (← extractFotTerm pi params[1]!))
+        | "rightEx"      => pure (rightEx (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
         | "rightForall"  => pure (rightForall (parseNat (params[0]!)) (parseParamString (params[1]!)))
         | "rightRefl"    => pure (rightRefl (parseNat params[0]!))
         | "rightSubstEq" => pure (rightSubstEq (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
@@ -1343,9 +1351,9 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
         | "clausify" => pure (clausify (parseNat params[0]!) (parseNat params[1]!))
         | "elimIffRefl"  => pure (elimIffRefl (parseNat (params[0]!)) (parseNat (params[1]!)))
         | "instMult"     => panic! "instMult not implemented"
-        | _ =>
-          trace[auto.tptp.printProof] s!"parseInferenceRecord: unknown rule '{ruleName}'"
-          panic! s!"parseInferenceRecord: unknown rule '{ruleName}'"
+
+        | _ => panic! s!"parseInferenceRecord: unknown rule '{ruleName}'"
+
       return ⟨rule, premises⟩
   | _ =>
     panic! "parseInferenceRecord: term is not an inference record"

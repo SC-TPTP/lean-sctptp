@@ -778,8 +778,8 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     match antecedentIndex[i]? with
     | some hypName =>
       match t with
-      | .bvar 0 => evalTactic (← `(tactic| specialize $(mkIdent hypName) ‹_›))
-      | _ => evalSpecialize hypName t
+      | none => evalTactic (← `(tactic| specialize $(mkIdent hypName) ‹_›))
+      | some t => evalSpecialize hypName t
     | none => throwError s!"applyProofStep: leftForall: cannot find antecedent `{proofstep.antecedents[i]!}`"
 
   | rightAnd _ => do evalTactic (← `(tactic| constructor))
@@ -795,7 +795,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| intro $(mkIdent psName):ident))
     antecedentIndex := antecedentIndex.cons psName
 
-  | rightEx i varName => do
+  | rightEx i t => do
     -- see `exists` and `refine` tactic implementations
     evalTactic (← `(tactic| sorry))
 

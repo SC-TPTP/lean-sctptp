@@ -1086,7 +1086,7 @@ inductive InferenceRule where
   | leftNotImplies (i : Nat)
   | leftNotIff    (i : Nat)
   | leftNotNot    (i : Nat)
-  | leftNotEx     (i : Nat) (t : Expr)
+  | leftNotEx     (i : Nat) (t : Option Expr)
   | leftNotAll    (i : Nat) (y : String)
 
 -- Level 3
@@ -1335,7 +1335,7 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
         | "leftNotImplies" => pure (leftNotImplies (parseNat params[0]!))
         | "leftNotIff"   => pure (leftNotIff (parseNat params[0]!))
         | "leftNotNot"   => pure (leftNotNot (parseNat params[0]!))
-        | "leftNotEx"    => pure (leftNotEx (parseNat (params[0]!)) (← extractFotTerm pi params[1]!))
+        | "leftNotEx"    => pure (leftNotEx (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
         | "leftNotAll"   => pure (leftNotAll (parseNat (params[0]!)) (parseParamString (params[1]!)))
 
         -- Level 3

@@ -938,7 +938,10 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     match args with
     | [f, a] =>
       match term2LamTermSCTPTP pi f lctx, term2LamTermSCTPTP pi a lctx with
-      | .term s f, .term _ a => .term s (.app s f a)
+      | .term s₁ f, .term s₂ a =>
+        match s₁ with
+        | .func argTy resTy => .term resTy (.app argTy f a)
+        | _ => .error s!"term2LamTermSCTPTP :: Non-function head `{f}` applied to argument"
       | r, _ => .error s!"`app`: Unexpected term {t} produces ({r})"
     -- | [f, a] =>
     --   term2LamTermSCTPTP pi (Term.mk f.func (f.args ++ [a])) lctx
@@ -955,14 +958,14 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     match processVar pi var lctx with
     | .some (name, s) =>
       match term2LamTermSCTPTP pi ⟨.op "!", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
-      | .term (.base .prop) body => .term (.base .prop) (.mkForallE s body)
+      | .term _ body => .term (.base .prop) (.mkForallEF s body)
       | r => .error s!"`!1`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
     | r => .error s!"`!2`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
   | ⟨.op "?", body :: var :: tail⟩ =>
     match processVar pi var lctx with
     | .some (name, s) =>
       match term2LamTermSCTPTP pi ⟨.op "?", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
-      | .term (.base .prop) body => .term (.base .prop) (.mkExistE s body)
+      | .term _ body => .term (.base .prop) (.mkExistEF s body)
       | r => .error s!"`?1`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
     | r => .error s!"`?2`: Unexpected term {t} (body: {termTreeString body}, var: {termTreeString var}) produces ({r})"
   | ⟨.op "^", body :: var :: tail⟩ =>
@@ -976,15 +979,15 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     term2LamTermSCTPTP pi body lctx
   | ⟨.op "~", [a]⟩     =>
     match term2LamTermSCTPTP pi a lctx with
-    | .term (.base .prop) la => .term (.base .prop) (.mkNot la)
+    | .term _ la => .term (.base .prop) (.mkNot la)
     | r => .error s!"`~`: Unexpected term {t} produces ({r})"
   | ⟨.op "|", [a,b]⟩   =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
-    | .term (.base .prop) la, .term (.base .prop) lb => .term (.base .prop) (.mkOr la lb)
+    | .term _ la, .term (.base .prop) lb => .term (.base .prop) (.mkOr la lb)
     | r₁, r₂ => .error s!"`|`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "&", [a,b]⟩   =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
-    | .term (.base .prop) la, .term (.base .prop) lb => .term (.base .prop) (.mkAnd la lb)
+    | .term _ la, .term (.base .prop) lb => .term (.base .prop) (.mkAnd la lb)
     | r₁, r₂ => .error s!"`&`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "<=>", [a,b]⟩ =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
@@ -1000,8 +1003,8 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     | r₁, r₂ => .error s!"`!=`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "=", [a,b]⟩   =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
-    | .term s₁ la, .term s₂ lb =>
-      .term (.base .prop) (.mkEq s₁ la lb)
+    | .term (.base .int) la, .term s₂ lb => .term (.base .prop) (.mkEq s₂ la lb)
+    | .term s₁ la, .term _ lb            => .term (.base .prop) (.mkEq s₁ la lb)
       -- match s₁.beq s₂ with
       -- | true => .term (.base .prop) (.mkEq s₁ la lb)
       -- | false => .error s!"Application type mismatch in {t}"
@@ -1015,11 +1018,10 @@ where
   processVar (pi : ParsingInfo) (var : Term) (lctx : Std.HashMap String (Nat × LamSort)) : Option (String × LamSort) :=
     match var with
     | ⟨.ident v, []⟩ =>
-      -- TODO: we are missing some information here
       match term2LamTermSCTPTP pi var lctx with
       | .term s _ => .some (v, s)
       | .sort s => .some (v, s)
-      | _ => .some (v, .base .prop)
+      | _ => .some (v, .base .int) -- TODO: this is a hack to indicate that we don't know the type and that it should be inferred
     | _ => .none
   deBruijnAndSort? (lctx : Std.HashMap String (Nat × LamSort)) (id : String) : Option (Nat × LamSort) :=
     match lctx.get? id with
@@ -1042,8 +1044,8 @@ open Lam2D LamReif in
 def lamTerm2Expr (t : Embedding.Lam.LamTerm) : ReifM Expr := do
   let tyValMap := Std.HashMap.ofList ((← getTyVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
   let varValMap := Std.HashMap.ofList ((← getVarVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
-  interpLamTermAsUnlifted tyValMap varValMap .empty 0 t
-  -- interpLamTermAsUnliftedWithInference tyValMap varValMap .empty 0 t
+  -- interpLamTermAsUnlifted tyValMap varValMap .empty 0 t
+  interpLamTermAsUnliftedWithInference tyValMap varValMap .empty 0 t
 
 
 inductive InferenceRule where
@@ -1418,8 +1420,8 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
             pure (antecedents, consequents)
           | _ => throwError s!"Unexpected number of formulas in sequent: {sequent}"
 
-          -- ### Reifing the inference record
-          let infRec : InferenceRecord ←  parseInferenceRecord inferTerm
+        -- ### Reifing the inference record
+        let infRec : InferenceRecord ←  parseInferenceRecord inferTerm
 
         -- ### Instantiating the proof step
         let step := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩

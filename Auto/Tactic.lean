@@ -704,7 +704,8 @@ def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainCon
   for decl in lctx do
     let ty ← Core.betaReduce (← instantiateMVars decl.type)
     s := s ++ s!"- {decl.userName} : {ty}\n"
-  throwError s!"Cannot find hypothesis for `{e}` in context:\n{s}"
+  let goalStr ← (← getMainGoal).getType
+  throwError s!"Cannot find hypothesis for `{e}` in context:\n{s}\n|- {goalStr}"
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -791,29 +792,41 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | rightSubstEq i P => do
     let equality := proofstep.antecedents[i]!
-    let (_, u) ← match equality with
+    let mut (t, u) ← match equality with
       | Expr.app (.app (.app (.const ``Eq _) _) t) u => pure (t, u)
       | _ => throwError s!"rightSubstEq: cannot find equality in the antecedent form {equality}"
-    let P_u ← Core.betaReduce (← instantiateMVars (P.app u))
-    let eqHypName ← getHypName equality true
+    let eqHypName ← getHypName equality
+    let mut P_u := P.app u
+    try
+      let _ ← getHypName P_u true
+    catch _ =>
+      (t, u) := (u, t)
+      P_u := P.app u
     let P_u_hypName ← getHypName P_u true
     let newHypName := Name.str P_u_hypName "0"
     -- TODO: use (motive := P)
-    evalTactic (← `(tactic| apply $(mkIdent P_u_hypName); first | apply Eq.subst $(mkIdent eqHypName) | apply Eq.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]; intro $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| apply $(mkIdent P_u_hypName); first | apply Eq.subst $(mkIdent eqHypName) | apply Eq.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
 
   | leftSubstEq i P => do evalTactic (← `(tactic| sorry))
 
-  | rightSubstIff i P => do
+  | rightSubstIff i R => do
     let equivalence := proofstep.antecedents[i]!
-    let (_, u) ← match equivalence with
-      | Expr.app (.app (.app (.const ``Iff _) _) t) u => pure (t, u)
-      | _ => throwError s!"rightSubstIff: cannot find equality in the antecedent form {equivalence}"
-    let P_u ← Core.betaReduce (← instantiateMVars (P.app u))
-    let eqHypName ← getHypName equivalence true
-    let P_u_hypName ← getHypName P_u true
-    let newHypName := Name.str P_u_hypName "0"
+    let mut (phi, psi) ← match equivalence with
+      | Expr.app (.app (.const ``Iff _) phi) psi => pure (phi, psi)
+      | _ => throwError s!"rightSubstIff: cannot find equivalence in the antecedent form {equivalence}"
+    let eqHypName ← getHypName equivalence
+    let mut R_psi := R.app psi
+    try
+      let _ ← getHypName R_psi true
+    catch _ =>
+      (psi, phi) := (phi, psi)
+      R_psi := R.app psi
+    let R_psi_hypName ← getHypName R_psi true
+    let newHypName := Name.str R_psi_hypName "0"
     -- TODO: use (p := P)
-    evalTactic (← `(tactic| apply $(mkIdent P_u_hypName); first | apply Iff.subst $(mkIdent eqHypName) | apply Iff.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]; intro $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName); first | apply Iff.subst $(mkIdent eqHypName) | apply Iff.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
 
   | leftSubstIff i P => do evalTactic (← `(tactic| sorry))
 
@@ -932,6 +945,8 @@ where
       let proofsteps ← queryTPTPEgg exportFacts
       if let .some proofsteps := proofsteps then
         return proofsteps
+      -- else
+      --   throwError "Egg found a proof, but reification failed"
     throwError "Egg failed to find proof"
 
 #check LocalContext
@@ -992,7 +1007,7 @@ set_option auto.mono.mode "fol"
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
--- set_option trace.auto.tptp.result true
+set_option trace.auto.tptp.result true
 set_option trace.auto.lamReif.printValuation true
 
 
@@ -1002,10 +1017,10 @@ example : A ↔ A := by
 example : A = A := by
   egg
 
-example (α : Type) (sf : α -> α) (cemptySet : α)
-  (h1 : ∀ x, x = sf (sf (sf x)))
-  (h2 : ∀ x, x = sf (sf x)) :
-  cemptySet = sf cemptySet := by
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  a = f a := by
   egg
 
 theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)

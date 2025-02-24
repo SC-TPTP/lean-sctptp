@@ -387,6 +387,18 @@ namespace Lam2D
     let arginterp ← interpLamTermAsUnlifted tyVal varVal etomVal lctx arg
     return .app fninterp arginterp
 
+
+
+  def interpLamSortAsUnliftedWithInference (tyVal : Std.HashMap Nat Expr) : LamSort → MetaM Expr
+  | .atom n => do
+    let .some e := tyVal.get? n
+      | throwError "{decl_name%} :: Cannot find fvarId assigned to type atom {n}"
+    return e
+  | .base .int => return ← (Meta.mkFreshExprMVar none)
+  | .base b => return Lam2D.interpLamBaseSortAsUnlifted b
+  | .func s₁ s₂ => do
+    return .forallE `_ (← interpLamSortAsUnliftedWithInference tyVal s₁) (← interpLamSortAsUnliftedWithInference tyVal s₂) .default
+
   def interpLamBaseTermAsUnliftedWithInference (tyVal : Std.HashMap Nat Expr) : LamBaseTerm → MetaM Expr
   | .pcst pc    => Lam2D.interpPropConstAsUnlifted pc
   | .bcst bc    => Lam2D.interpBoolConstAsUnlifted bc
@@ -400,20 +412,26 @@ namespace Lam2D
   | .existEI _  => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
   | .iteI _     => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
   | .eq s       => do
-    return ←  Meta.mkAppOptM ``Eq #[← interpLamSortAsUnlifted tyVal s]
+    let rawTy ←
+      match s with
+      | .base .int => Meta.mkFreshExprMVar none
+      | _          => interpLamSortAsUnliftedWithInference tyVal s
+    let ty ← instantiateMVars rawTy
+    return ← Meta.mkAppOptM ``Eq #[ty]
+    -- return ←  Meta.mkAppOptM ``Eq #[← interpLamSortAsUnliftedWithInference tyVal s]
   | .forallE s  => do
-    let ty ← interpLamSortAsUnlifted tyVal s
+    let ty ← interpLamSortAsUnliftedWithInference tyVal s
     let sort ← Expr.normalizeType (← Meta.inferType ty)
     let Expr.sort lvl := sort
       | throwError "{decl_name%} :: Unexpected sort {sort}"
     let .some (.defnInfo forallVal) := (← getEnv).find? ``forallF
       | throwError "{decl_name%} :: Unexpected error"
     let forallFExpr := forallVal.value.instantiateLevelParams forallVal.levelParams [lvl, .zero]
-    return mkAppN forallFExpr #[← interpLamSortAsUnlifted tyVal s]
+    return mkAppN forallFExpr #[ty]
   | .existE s  => do
-    return ← Meta.mkAppOptM ``Exists #[← interpLamSortAsUnlifted tyVal s]
+    return ← Meta.mkAppOptM ``Exists #[← interpLamSortAsUnliftedWithInference tyVal s]
   | .ite s     => do
-    return ← Meta.mkAppOptM ``Bool.ite' #[← interpLamSortAsUnlifted tyVal s]
+    return ← Meta.mkAppOptM ``Bool.ite' #[← interpLamSortAsUnliftedWithInference tyVal s]
 
   /--
     Takes a `t : LamTerm` and produces the `un-lifted` version of `t.interp`.
@@ -437,12 +455,11 @@ namespace Lam2D
   | .base b => interpLamBaseTermAsUnliftedWithInference tyVal b
   | .bvar n => return .bvar n
   | .lam s t => do
-    let sinterp ← interpLamSortAsUnlifted tyVal s
+    let sinterp ← interpLamSortAsUnliftedWithInference tyVal s
     let tinterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx.succ t
     let name := (`eb!).appendIndexAfter lctx
     return .lam name sinterp tinterp .default
   | .app _ fn arg => do
-    -- let fninterp ← interpLamTermAsUnlifted tyVal varVal etomVal lctx fn
     let arginterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx arg
     match fn with
     | .base b =>

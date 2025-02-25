@@ -934,17 +934,14 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
   | ⟨.ident "$true", []⟩ => .term (.base .prop) (.base .trueE)
   | ⟨.ident "$false", []⟩ => .term (.base .prop) (.base .falseE)
   | ⟨.ident "app", args⟩ =>
-    -- TODO: This is probably incorrect
     match args with
     | [f, a] =>
       match term2LamTermSCTPTP pi f lctx, term2LamTermSCTPTP pi a lctx with
-      | .term s₁ f, .term s₂ a =>
+      | .term s₁ f, .term _ a =>
         match s₁ with
         | .func argTy resTy => .term resTy (.app argTy f a)
         | _ => .error s!"term2LamTermSCTPTP :: Non-function head `{f}` applied to argument"
       | r, _ => .error s!"`app`: Unexpected term {t} produces ({r})"
-    -- | [f, a] =>
-    --   term2LamTermSCTPTP pi (Term.mk f.func (f.args ++ [a])) lctx
     | _ => .error s!"`app`: Unexpected term {t}"
   | ⟨.ident ids, as⟩ =>
     let head :=
@@ -995,19 +992,13 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     | r₁, r₂ => .error s!"`<=>`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "!=", [a,b]⟩  =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
-    | .term s₁ la, .term s₂ lb =>
-      .term (.base .prop) (.mkNot (.mkEq s₁ la lb))
-      -- match s₁.beq s₂ with
-      -- | true => .term (.base .prop) (.mkNot (.mkEq s₁ la lb))
-      -- | false => .error s!"Application type mismatch in {t}"
+    | .term (.base .int) la, .term s₂ lb => .term (.base .prop) (.mkNot (.mkEq s₂ la lb))
+    | .term s₁ la, .term _ lb            => .term (.base .prop) (.mkNot (.mkEq s₁ la lb))
     | r₁, r₂ => .error s!"`!=`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "=", [a,b]⟩   =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
     | .term (.base .int) la, .term s₂ lb => .term (.base .prop) (.mkEq s₂ la lb)
     | .term s₁ la, .term _ lb            => .term (.base .prop) (.mkEq s₁ la lb)
-      -- match s₁.beq s₂ with
-      -- | true => .term (.base .prop) (.mkEq s₁ la lb)
-      -- | false => .error s!"Application type mismatch in {t}"
     | r₁, r₂ => .error s!"`=`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "=>", [a,b]⟩ | ⟨.op "<=", [b,a]⟩ =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
@@ -1071,10 +1062,10 @@ inductive InferenceRule where
   | rightEx       (i : Nat) (t : Option Expr)
   | rightForall   (i : Nat) (y : String)
   | rightRefl     (i : Nat)
-  | rightSubstEq  (i : Nat) (P : Expr)
-  | leftSubstEq   (i : Nat) (P : Expr)
-  | rightSubstIff (i : Nat) (R : Expr)
-  | leftSubstIff  (i : Nat) (R : Expr)
+  | rightSubstEq  (i : Nat) (backward : Bool) (P : Expr)
+  | leftSubstEq   (i : Nat) (backward : Bool) (P : Expr)
+  | rightSubstIff (i : Nat) (backward : Bool) (R : Expr)
+  | leftSubstIff  (i : Nat) (backward : Bool) (R : Expr)
   | instFun       (F : String) (t : Expr) (args : List String)
   | instPred      (P : String) (phi : Expr) (args : List String)
   | rightEpsilon  (A : Expr) (x : String) (t : Expr)
@@ -1082,28 +1073,28 @@ inductive InferenceRule where
 
 -- Level 2
   | congruence
-  | leftHyp       (i : Nat) (j : Nat)
-  | leftNotAnd    (i : Nat)
-  | leftNotOr     (i : Nat)
+  | leftHyp        (i : Nat) (j : Nat)
+  | leftNotAnd     (i : Nat)
+  | leftNotOr      (i : Nat)
   | leftNotImplies (i : Nat)
-  | leftNotIff    (i : Nat)
-  | leftNotNot    (i : Nat)
-  | leftNotEx     (i : Nat) (t : Option Expr)
-  | leftNotAll    (i : Nat) (y : String)
+  | leftNotIff     (i : Nat)
+  | leftNotNot     (i : Nat)
+  | leftNotEx      (i : Nat) (t : Option Expr)
+  | leftNotAll     (i : Nat) (y : String)
 
 -- Level 3
-  | rightRelIff   (i : Nat)
-  | rightSubstMulti (i : List Nat) (P : Expr) (vars : List String)
-  | leftSubstMulti (i : List Nat) (P : Expr) (vars : List String)
-  | rightSubstEqForallLocal (i : Nat) (R : Expr) (Z : Expr)
-  | rightSubstEqForall (i : Nat) (R : Expr) (Z : Expr)
+  | rightRelIff              (i : Nat)
+  | rightSubstMulti          (i : List Nat) (P : Expr) (vars : List String)
+  | leftSubstMulti           (i : List Nat) (P : Expr) (vars : List String)
+  | rightSubstEqForallLocal  (i : Nat) (R : Expr) (Z : Expr)
+  | rightSubstEqForall       (i : Nat) (R : Expr) (Z : Expr)
   | rightSubstIffForallLocal (i : Nat) (R : Expr) (Z : Expr)
-  | rightSubstIffForall (i : Nat) (R : Expr) (Z : Expr)
-  | rightNnf (i : Nat)
-  | rightPrenex (i : Nat)
-  | clausify (i : Nat) (j : Nat)
-  | elimIffRefl (i : Nat) (j : Nat)
-  | instMult (args : List (String × Expr × List String))
+  | rightSubstIffForall      (i : Nat) (R : Expr) (Z : Expr)
+  | rightNnf                 (i : Nat) (j : Nat)
+  | rightPrenex              (i : Nat) (j : Nat)
+  | clausify                 (i : Nat)
+  | elimIffRefl              (i : Nat) (j : Nat)
+  | instMult                 (args : List (String × Expr × List String))
 deriving Inhabited, Repr
 
 open InferenceRule in
@@ -1121,22 +1112,22 @@ def InferenceRule.toString : InferenceRule → String
   | leftIff i           => s!"leftIff {i}"
   | leftNot i           => s!"leftNot {i}"
   | leftEx i y          => s!"leftEx {i} {y}"
-  | leftForall i t      => s!"leftForall {i} {t}"
+  | leftForall i t      => s!"leftForall {i} `{t}`"
   | rightAnd i          => s!"rightAnd {i}"
   | rightOr i           => s!"rightOr {i}"
   | rightImplies i      => s!"rightImplies {i}"
   | rightIff i          => s!"rightIff {i}"
   | rightNot i          => s!"rightNot {i}"
-  | rightEx i t         => s!"rightEx {i} {t}"
+  | rightEx i t         => s!"rightEx {i} `{t}`"
   | rightForall i y     => s!"rightForall {i} {y}"
   | rightRefl i         => s!"rightRefl {i}"
-  | rightSubstEq i P    => s!"rightSubstEq {i} {P}"
-  | leftSubstEq i P     => s!"leftSubstEq {i} {P}"
-  | rightSubstIff i R   => s!"rightSubstIff {i} {R}"
-  | leftSubstIff i R    => s!"leftSubstIff {i} {R}"
-  | instFun F t args    => s!"instFun {F} {t} {args}"
-  | instPred P phi args => s!"instPred {P} {phi} {args}"
-  | rightEpsilon A x t => s!"rightEpsilon {A} {x} {t}"
+  | rightSubstEq i b P  => s!"rightSubstEq {i} {b} `{P}`"
+  | leftSubstEq i b P   => s!"leftSubstEq {i} {b} `{P}`"
+  | rightSubstIff i b R => s!"rightSubstIff {i} {b}` `{R}`"
+  | leftSubstIff i b R  => s!"leftSubstIff {i} {b} {R}`"
+  | instFun F t args    => s!"instFun {F} `{t}` {args}"
+  | instPred P phi args => s!"instPred {P} `{phi}` {args}"
+  | rightEpsilon A x t  => s!"rightEpsilon {A} {x} `{t}`"
   | leftEpsilon i y     => s!"leftEpsilon {i} {y}"
 
 -- Level 2
@@ -1147,22 +1138,22 @@ def InferenceRule.toString : InferenceRule → String
   | leftNotImplies i    => s!"leftNotImplies {i}"
   | leftNotIff i        => s!"leftNotIff {i}"
   | leftNotNot i        => s!"leftNotNot {i}"
-  | leftNotEx i t       => s!"leftNotEx {i} {t}"
+  | leftNotEx i t       => s!"leftNotEx {i} `{t}`"
   | leftNotAll i y      => s!"leftNotAll {i} {y}"
 
 -- Level 3
-  | rightRelIff i       => s!"rightRelIff {i}"
-  | rightSubstMulti i P vars => s!"rightSubstMulti {i} {P} {vars}"
-  | leftSubstMulti i P vars => s!"leftSubstMulti {i} {P} {vars}"
-  | rightSubstEqForallLocal i R Z => s!"rightSubstEqualForallLocal {i} {R} {Z}"
-  | rightSubstEqForall i R Z => s!"rightSubstEqForall {i} {R} {Z}"
-  | rightSubstIffForallLocal i R Z => s!"rightSubstIffForallLocal {i} {R} {Z}"
-  | rightSubstIffForall i R Z => s!"rightSubstIffForall {i} {R} {Z}"
-  | rightNnf i          => s!"rightNnf {i}"
-  | rightPrenex i       => s!"rightPrenex {i}"
-  | clausify i j        => s!"clausify {i} {j}"
-  | elimIffRefl i j     => s!"elimIffRefl {i} {j}"
-  | instMult args       =>
+  | rightRelIff i                  => s!"rightRelIff {i}"
+  | rightSubstMulti i P vars       => s!"rightSubstMulti {i} `{P}` {vars}"
+  | leftSubstMulti i P vars        => s!"leftSubstMulti {i} `{P}` {vars}"
+  | rightSubstEqForallLocal i R Z  => s!"rightSubstEqualForallLocal {i} `{R}` {Z}"
+  | rightSubstEqForall i R Z       => s!"rightSubstEqForall {i} `{R}` {Z}"
+  | rightSubstIffForallLocal i R Z => s!"rightSubstIffForallLocal {i} `{R}` {Z}"
+  | rightSubstIffForall i R Z      => s!"rightSubstIffForall {i} `{R}` {Z}"
+  | rightNnf i j                   => s!"rightNnf {i} {j}"
+  | rightPrenex i j                => s!"rightPrenex {i} {j}"
+  | clausify i                     => s!"clausify {i}"
+  | elimIffRefl i j                => s!"elimIffRefl {i} {j}"
+  | instMult args =>
     let argsStr := String.intercalate ", " (args.map fun (x, y, z) => s!"{x}:({y}, [{String.intercalate ", " z}])")
     s!"instMult [{argsStr}]"
 
@@ -1170,7 +1161,15 @@ instance : ToString InferenceRule where
   toString := InferenceRule.toString
 
 
-/-- Auxiliary helper to parse a natural number from a term. -/
+def parseBool (pt : Term) : Bool :=
+  match pt with
+  | Term.mk (Token.ident s) _ =>
+    match s with
+    | "true" => true
+    | "false" => false
+    | _   => panic! "parseBool: not a valid boolean"
+  | _ => panic! "parseBool: unexpected term format"
+
 def parseNat (pt : Term) : Nat :=
   match pt with
   | Term.mk (Token.ident s) _ =>
@@ -1299,60 +1298,60 @@ def parseInferenceRecord (t : Term) : LamReif.ReifM (InferenceRecord) := do
       let rule : InferenceRule ←
         match ruleName with
         -- Level 1
-        | "leftFalse"    => pure (leftFalse (parseNat params[0]!))
-        | "rightTrue"    => pure (rightTrue (parseNat params[0]!))
-        | "hyp"          => pure (hyp (parseNat (params[0]!)))
-        | "leftWeaken"   => pure (leftWeaken (parseNat params[0]!))
-        | "rightWeaken"  => pure (rightWeaken (parseNat params[0]!))
-        | "cut"          => pure (cut (parseNat params[0]!))
-        | "leftAnd"      => pure (leftAnd (parseNat params[0]!))
-        | "leftOr"       => pure (leftOr (parseNat params[0]!))
-        | "leftImplies"  => pure (leftImplies (parseNat params[0]!))
-        | "leftIff"      => pure (leftIff (parseNat params[0]!))
-        | "leftNot"      => pure (leftNot (parseNat params[0]!))
-        | "leftEx"       => pure (leftEx (parseNat (params[0]!)) (parseParamString (params[1]!)))
-        | "leftForall"   => pure (leftForall (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
-        | "rightAnd"     => pure (rightAnd (parseNat params[0]!))
-        | "rightOr"      => pure (rightOr (parseNat params[0]!))
-        | "rightImplies" => pure (rightImplies (parseNat params[0]!))
-        | "rightIff"     => pure (rightIff (parseNat params[0]!))
-        | "rightNot"     => pure (rightNot (parseNat params[0]!))
-        | "rightEx"      => pure (rightEx (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
-        | "rightForall"  => pure (rightForall (parseNat (params[0]!)) (parseParamString (params[1]!)))
-        | "rightRefl"    => pure (rightRefl (parseNat params[0]!))
-        | "rightSubstEq" => pure (rightSubstEq (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
-        | "leftSubstEq"  => pure (leftSubstEq (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
-        | "rightSubstIff" => pure (rightSubstIff (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
-        | "leftSubstIff"  => pure (leftSubstIff (parseNat (params[0]!)) (← extractFofLambdaTerm pi params[1]! (parseParamString (params[2]!))))
+        | "leftFalse"     => pure (leftFalse (parseNat params[0]!))
+        | "rightTrue"     => pure (rightTrue (parseNat params[0]!))
+        | "hyp"           => pure (hyp (parseNat (params[0]!)))
+        | "leftWeaken"    => pure (leftWeaken (parseNat params[0]!))
+        | "rightWeaken"   => pure (rightWeaken (parseNat params[0]!))
+        | "cut"           => pure (cut (parseNat params[0]!))
+        | "leftAnd"       => pure (leftAnd (parseNat params[0]!))
+        | "leftOr"        => pure (leftOr (parseNat params[0]!))
+        | "leftImplies"   => pure (leftImplies (parseNat params[0]!))
+        | "leftIff"       => pure (leftIff (parseNat params[0]!))
+        | "leftNot"       => pure (leftNot (parseNat params[0]!))
+        | "leftEx"        => pure (leftEx (parseNat (params[0]!)) (parseParamString (params[1]!)))
+        | "leftForall"    => pure (leftForall (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
+        | "rightAnd"      => pure (rightAnd (parseNat params[0]!))
+        | "rightOr"       => pure (rightOr (parseNat params[0]!))
+        | "rightImplies"  => pure (rightImplies (parseNat params[0]!))
+        | "rightIff"      => pure (rightIff (parseNat params[0]!))
+        | "rightNot"      => pure (rightNot (parseNat params[0]!))
+        | "rightEx"       => pure (rightEx (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
+        | "rightForall"   => pure (rightForall (parseNat (params[0]!)) (parseParamString (params[1]!)))
+        | "rightRefl"     => pure (rightRefl (parseNat params[0]!))
+        | "rightSubst"    => pure (rightSubstEq (parseNat (params[0]!)) (parseBool (params[1]!)) (← extractFofLambdaTerm pi params[2]! (parseParamString (params[3]!))))
+        | "leftSubst"     => pure (leftSubstEq (parseNat (params[0]!)) (parseBool (params[1]!)) (← extractFofLambdaTerm pi params[2]! (parseParamString (params[3]!))))
+        | "rightSubstIff" => pure (rightSubstIff (parseNat (params[0]!)) (parseBool (params[1]!)) (← extractFofLambdaTerm pi params[2]! (parseParamString (params[3]!))))
+        | "leftSubstIff"  => pure (leftSubstIff (parseNat (params[0]!)) (parseBool (params[1]!)) (← extractFofLambdaTerm pi params[2]! (parseParamString (params[3]!))))
         | "instFun"       => pure (instFun (parseParamString params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
         | "instPred"      => pure (instPred (parseParamString params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
         | "rightEpsilon"  => pure (rightEpsilon (← extractFofTerm pi params[0]!) (parseParamString params[1]!) (← extractFofTerm pi params[2]!))
         | "leftEpsilon"   => pure (leftEpsilon (parseNat params[0]!) (parseParamString params[1]!))
 
         -- Level 2
-        | "congruence"   => pure congruence
-        | "leftHyp"      => pure (leftHyp (parseNat (params[0]!)) (parseNat (params[1]!)))
-        | "leftNotAnd"   => pure (leftNotAnd (parseNat params[0]!))
-        | "leftNotOr"    => pure (leftNotOr (parseNat params[0]!))
+        | "congruence"     => pure congruence
+        | "leftHyp"        => pure (leftHyp (parseNat (params[0]!)) (parseNat (params[1]!)))
+        | "leftNotAnd"     => pure (leftNotAnd (parseNat params[0]!))
+        | "leftNotOr"      => pure (leftNotOr (parseNat params[0]!))
         | "leftNotImplies" => pure (leftNotImplies (parseNat params[0]!))
-        | "leftNotIff"   => pure (leftNotIff (parseNat params[0]!))
-        | "leftNotNot"   => pure (leftNotNot (parseNat params[0]!))
-        | "leftNotEx"    => pure (leftNotEx (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
-        | "leftNotAll"   => pure (leftNotAll (parseNat (params[0]!)) (parseParamString (params[1]!)))
+        | "leftNotIff"     => pure (leftNotIff (parseNat params[0]!))
+        | "leftNotNot"     => pure (leftNotNot (parseNat params[0]!))
+        | "leftNotEx"      => pure (leftNotEx (parseNat (params[0]!)) (← extractFotTermOptional pi params[1]!))
+        | "leftNotAll"     => pure (leftNotAll (parseNat (params[0]!)) (parseParamString (params[1]!)))
 
         -- Level 3
-        | "rightRelIff"  => pure (rightRelIff (parseNat params[0]!))
-        | "rightSubstMulti" => pure (rightSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
-        | "leftSubstMulti" => pure (leftSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
-        | "rightSubstEqForallLocal" => pure (rightSubstEqForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
-        | "rightSubstEqForall" => pure (rightSubstEqForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightRelIff"              => pure (rightRelIff (parseNat params[0]!))
+        | "rightSubstMulti"          => pure (rightSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
+        | "leftSubstMulti"           => pure (leftSubstMulti (parseListNat params[0]!) (← extractFofTerm pi params[1]!) (parseListString params[2]!))
+        | "rightSubstEqForallLocal"  => pure (rightSubstEqForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightSubstEqForall"       => pure (rightSubstEqForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
         | "rightSubstIffForallLocal" => pure (rightSubstIffForallLocal (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
-        | "rightSubstIffForall" => pure (rightSubstIffForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
-        | "rightNnf" => pure (rightNnf (parseNat params[0]!))
-        | "rightPrenex" => pure (rightPrenex (parseNat params[0]!))
-        | "clausify" => pure (clausify (parseNat params[0]!) (parseNat params[1]!))
-        | "elimIffRefl"  => pure (elimIffRefl (parseNat (params[0]!)) (parseNat (params[1]!)))
-        | "instMult"     => panic! "instMult not implemented"
+        | "rightSubstIffForall"      => pure (rightSubstIffForall (parseNat params[0]!) (← extractFofTerm pi params[1]!) (← extractFofTerm pi params[2]!))
+        | "rightNnf"                 => pure (rightNnf (parseNat params[0]!) (parseNat params[1]!))
+        | "rightPrenex"              => pure (rightPrenex (parseNat params[0]!) (parseNat params[1]!))
+        | "clausify"                 => pure (clausify (parseNat params[0]!))
+        | "elimIffRefl"              => pure (elimIffRefl (parseNat (params[0]!)) (parseNat (params[1]!)))
+        | "instMult"                 => panic! "instMult not implemented"
 
         | _ => panic! s!"parseInferenceRecord: unknown rule '{ruleName}'"
 

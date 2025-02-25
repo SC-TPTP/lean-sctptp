@@ -1,4 +1,5 @@
 import Lean
+import Mathlib
 import Auto.Translation
 import Auto.Solver.SMT
 import Auto.Solver.TPTP
@@ -611,7 +612,7 @@ def evalMonoNative : Tactic
 
 
 open Embedding.Lam in
-def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Parser.TPTP.ProofStep)) := do
+def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
   let lamVarTy := (← LamReif.getVarVal).map Prod.snd
   let lamEVarTy ← LamReif.getLamEVarTy
   let exportLamTerms ← exportFacts.mapM (fun re => do
@@ -627,12 +628,11 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Option (Array Par
   if proven then
     try
       let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
-      return .some proofSteps
+      return proofSteps
     catch e =>
-      trace[auto.tptp.printProof] "TPTP proof reification failed with {e.toMessageData}"
-      return .none
+      throwError "Egg found a proof, but proof reification failed with {e.toMessageData}"
   else
-    return .none
+    throwError "Egg failed to find proof"
 
 
 open Lean Elab Tactic Meta
@@ -692,14 +692,14 @@ def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainCon
   let mut e := e
   if addNot then
     e := mkApp (mkConst ``Not) e
-  e ← Core.betaReduce (← instantiateMVars e)
   let lctx ← getLCtx
   for decl in lctx do
-    let ty ← Core.betaReduce (← instantiateMVars decl.type)
+    let ty := decl.type
     if ← isDefEq ty e then
       return decl.userName
 
   -- build error message by appending all hypotheses
+  e ← Core.betaReduce (← instantiateMVars e)
   let mut s := ""
   for decl in lctx do
     let ty ← Core.betaReduce (← instantiateMVars decl.type)
@@ -735,7 +735,11 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let newHypName := Name.str hypName "0"
     evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent newHypName):ident))
 
-  | leftImplies i => do evalTactic (← `(tactic| sorry))
+  | leftImplies i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    let newHypName := Name.str hypName "0"
+    evalTactic (← `(tactic| rw [imp_iff_not_or] at $(mkIdent hypName):ident))
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent newHypName):ident))
 
   | leftIff i => do
     let hypName ← getHypName proofstep.antecedents[i]!
@@ -743,7 +747,11 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
 
   | leftNot _ => pure ()
-  | leftEx i varName => do evalTactic (← `(tactic| sorry))
+
+  | leftEx i y => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    let newHypName := Name.str hypName "0"
+    evalTactic (← `(tactic| rcases $(mkIdent hypName):ident with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent newHypName)⟩))
 
   | leftForall i t => do
     let hypName ← getHypName proofstep.antecedents[i]!
@@ -766,7 +774,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | rightImplies i => do
     let hypName ← getHypName proofstep.consequents[i]! true
     let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
-    evalTactic (← `(tactic| rcases (not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1):ident, $(mkIdent hypName2)⟩))
+    evalTactic (← `(tactic| rcases (Classical.not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1):ident, $(mkIdent hypName2)⟩))
 
   | rightIff i => do
     let hypName ← getHypName proofstep.consequents[i]! true
@@ -780,8 +788,13 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| apply $(mkIdent hypName); intro $(mkIdent psName):ident))
 
   | rightEx i t => do
-    -- see `exists` and `refine` tactic implementations
-    evalTactic (← `(tactic| sorry))
+    let hypName ← getHypName proofstep.antecedents[i]!
+    let newHypName := Name.str hypName "0"
+    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent newHypName):ident))
+    match t with
+    | none => evalTactic (← `(tactic| specialize $(mkIdent newHypName) ‹_›))
+    | some t => evalSpecialize newHypName t
 
   | rightForall i y => do
     let hypName ← getHypName proofstep.consequents[i]! true
@@ -790,48 +803,74 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | rightRefl _ => do evalTactic (← `(tactic| contradiction))
 
-  | rightSubstEq i P => do
+  | rightSubstEq i backward P => do
     let equality := proofstep.antecedents[i]!
-    let mut (t, u) ← match equality with
-      | Expr.app (.app (.app (.const ``Eq _) _) t) u => pure (t, u)
+    let (t, u) ← match equality with
+      | Expr.app (.app (.app (.const ``Eq _) _) t) u =>
+        if backward then
+          pure (u, t)
+        else
+          pure (t, u)
       | _ => throwError s!"rightSubstEq: cannot find equality in the antecedent form {equality}"
     let eqHypName ← getHypName equality
-    let mut P_u := P.app u
-    try
-      let _ ← getHypName P_u true
-    catch _ =>
-      (t, u) := (u, t)
-      P_u := P.app u
-    let P_u_hypName ← getHypName P_u true
+    let P_u_hypName ← getHypName (P.app u) true
     let newHypName := Name.str P_u_hypName "0"
     -- TODO: use (motive := P)
     evalTactic (← `(tactic| apply $(mkIdent P_u_hypName); first | apply Eq.subst $(mkIdent eqHypName) | apply Eq.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
     evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
 
-  | leftSubstEq i P => do evalTactic (← `(tactic| sorry))
+  | leftSubstEq i backward P => do
+    let equality := proofstep.antecedents[i]!
+    let (t, u) ← match equality with
+      | Expr.app (.app (.app (.const ``Eq _) _) t) u =>
+        if backward then
+          pure (u, t)
+        else
+          pure (t, u)
+      | _ => throwError s!"leftSubstEq: cannot find equality in the antecedent form {equality}"
+    let eqHypName ← getHypName equality
+    let P_u_hypName ← getHypName (P.app u)
+    let newHypName := Name.str P_u_hypName "0"
+    -- TODO: use (motive := P)
+    -- TODO: apply does not work here because it is not negated
+    evalTactic (← `(tactic| apply $(mkIdent P_u_hypName); first | apply Eq.subst $(mkIdent eqHypName) | apply Eq.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
 
-  | rightSubstIff i R => do
+  | rightSubstIff i backward R => do
     let equivalence := proofstep.antecedents[i]!
-    let mut (phi, psi) ← match equivalence with
-      | Expr.app (.app (.const ``Iff _) phi) psi => pure (phi, psi)
+    let (phi, psi) ← match equivalence with
+      | Expr.app (.app (.const ``Iff _) phi) psi =>
+        if backward then
+          pure (psi, phi)
+        else
+          pure (phi, psi)
       | _ => throwError s!"rightSubstIff: cannot find equivalence in the antecedent form {equivalence}"
     let eqHypName ← getHypName equivalence
-    let mut R_psi := R.app psi
-    try
-      let _ ← getHypName R_psi true
-    catch _ =>
-      (psi, phi) := (phi, psi)
-      R_psi := R.app psi
-    let R_psi_hypName ← getHypName R_psi true
+    let R_psi_hypName ← getHypName (R.app psi) true
     let newHypName := Name.str R_psi_hypName "0"
     -- TODO: use (p := P)
     evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName); first | apply Iff.subst $(mkIdent eqHypName) | apply Iff.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
     evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
 
-  | leftSubstIff i P => do evalTactic (← `(tactic| sorry))
+  | leftSubstIff i backward R => do
+    let equivalence := proofstep.antecedents[i]!
+    let (phi, psi) ← match equivalence with
+      | Expr.app (.app (.const ``Iff _) phi) psi =>
+        if backward then
+          pure (psi, phi)
+        else
+          pure (phi, psi)
+      | _ => throwError s!"leftSubstIff: cannot find equivalence in the antecedent form {equivalence}"
+    let eqHypName ← getHypName equivalence
+    let R_psi_hypName ← getHypName (R.app psi)
+    let newHypName := Name.str R_psi_hypName "0"
+    -- TODO: use (p := P)
+    -- TODO: apply does not work here because it is not negated
+    evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName); first | apply Iff.subst $(mkIdent eqHypName) | apply Iff.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
 
   | instFun funName termStr args => do evalTactic (← `(tactic| sorry))
-  | instPred predName formulaStr args => do evalTactic (← `(tactic| sorry))
+  | instPred predName formula args => do evalTactic (← `(tactic| sorry))
   | rightEpsilon A X t => do evalTactic (← `(tactic| sorry))
   | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
 
@@ -882,16 +921,35 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent newHypName)⟩))
 
   -- Level 3
-  | rightRelIff i => do evalTactic (← `(tactic| trivial))
+  | rightRelIff _ => do evalTactic (← `(tactic| trivial))
   | rightSubstMulti i P vars => do evalTactic (← `(tactic| sorry))
   | leftSubstMulti i P vars => do evalTactic (← `(tactic| sorry))
   | rightSubstEqForallLocal i R Z => do evalTactic (← `(tactic| sorry))
   | rightSubstEqForall i R Z => do evalTactic (← `(tactic| sorry))
   | rightSubstIffForallLocal i R Z => do evalTactic (← `(tactic| sorry))
   | rightSubstIffForall i R Z => do evalTactic (← `(tactic| sorry))
-  | rightNnf i => do evalTactic (← `(tactic| sorry))
-  | rightPrenex i => do evalTactic (← `(tactic| sorry))
-  | clausify i j => do evalTactic (← `(tactic| sorry))
+
+  | rightNnf i j => do
+    let hypName ← getHypName proofstep.consequents[i]!
+    let targetExpr := mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[j]!
+    let newHypName := Name.str hypName "0"
+    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
+    haveExpr psName targetExpr
+    evalTactic (← `(tactic| push_neg; push_neg at $(mkIdent psName):ident; exact $(mkIdent psName):ident))
+
+  | rightPrenex i j => do
+    let hypName ← getHypName proofstep.consequents[i]!
+    let targetExpr := mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[j]!
+    let newHypName := Name.str hypName "0"
+    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
+    haveExpr psName targetExpr
+    try
+      -- TODO: add missing simp rules/theorems
+      evalTactic (← `(tactic| push_neg; solve | simpa | simpa [*] | simp_all))
+    catch e =>
+      throwError s!"Prenex normalization failed, you are probably missing a `Nonempty` instance. Error message:\n{← e.toMessageData.toString}"
+
+  | clausify _ => do evalTactic (← `(tactic| tauto))
   | elimIffRefl i j => do evalTactic (← `(tactic| sorry))
   | instMult triplets => do evalTactic (← `(tactic| sorry))
 
@@ -900,10 +958,6 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
   (proofStepNameToIndex : Std.HashMap String Nat)
 : TacticM Unit := do
   if proofsteps.size != 0 then
-    -- print current goal
-    -- let currentGoal ← getMainGoal
-    -- let currentGoalType ← currentGoal.getType
-    -- trace[auto.tptp.printProof] s!"Current goal: {currentGoalType}"
     let proofstep := proofsteps[proofsteps.size - 1]!
     trace[auto.tptp.printProof] s!"  {proofstep}"
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
@@ -920,8 +974,6 @@ def runEgg
   (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
   withDefault do
     traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
-    -- trace[auto.tactic] "Conclusion: {conclusion}"
-    -- let lemmas := lemmas.push conclusion
     let lemmas ← rewriteIteCondDecide lemmas
     let (proofsteps, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.ProofStep)) do
       let s ← get
@@ -935,19 +987,16 @@ where
     let exportFacts ← LamReif.reifFacts uvalids
     let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
     let _ ← LamReif.reifInhabitations uinhs
-    let exportInds ← LamReif.reifMutInds minds
+    -- let exportInds ← LamReif.reifMutInds minds
     LamReif.printValuation
-    -- **Preprocessing in Verified Checker**
-    let (exportFacts', _) ← LamReif.preprocess exportFacts exportInds
-    exportFacts := exportFacts'
+    -- -- **Preprocessing in Verified Checker**
+    -- let (exportFacts', _) ← LamReif.preprocess exportFacts exportInds
+    -- exportFacts := exportFacts'
     -- **TPTP invocation and Premise Selection**
     if auto.tptp.get (← getOptions) then
       let proofsteps ← queryTPTPEgg exportFacts
-      if let .some proofsteps := proofsteps then
-        return proofsteps
-      -- else
-      --   throwError "Egg found a proof, but reification failed"
-    throwError "Egg failed to find proof"
+      return proofsteps
+    throwError "auto.tptp is not enabled"
 
 #check LocalContext
 @[tactic egg]
@@ -970,15 +1019,15 @@ def evalEgg : Tactic
     let (lemmas, inhFacts) ← collectAllLemmas hints uords (goalBinders.push (FVarId.mk `_currentGoalName))
     let proofsteps ← runEgg lemmas inhFacts
 
-    -- Trick: add original hypotheses as ProofStep with the `hyp` rule
-    let lemmas := lemmas.eraseIdx! (lemmas.size -1) -- drop last lemmas as it is the negated goal
-    let proofsteps := (lemmas.zipWithIndex.map (fun (lemma, i) =>{
-      name := s!"a{i}",
-      rule := .hyp i,
-      antecedents := [],
-      consequents := [lemma.type],
-      premises := []
-    })) ++ proofsteps
+    -- -- Trick: add original hypotheses as ProofStep with the `hyp` rule
+    -- let lemmas := lemmas.eraseIdx! (lemmas.size -1) -- drop last lemmas as it is the negated goal
+    -- let proofsteps := (lemmas.zipWithIndex.map (fun (lmma, i) =>{
+    --   name := s!"a{i}",
+    --   rule := .hyp i,
+    --   antecedents := [],
+    --   consequents := [lmma.type],
+    --   premises := []
+    -- })) ++ proofsteps
 
     trace[auto.tptp.printProof] "Proof steps (forward):"
     for step in proofsteps do
@@ -1004,6 +1053,7 @@ set_option auto.tptp true
 set_option auto.tptp.solver.name "egg"
 set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
 set_option auto.mono.mode "fol"
+-- set_option auto.lamReif.prep.def false
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
@@ -1017,8 +1067,28 @@ example : A ↔ A := by
 example : A = A := by
   egg
 
+example (α : Type) (a b c d e : α)
+  (h : ∀ y : Nat, ∃ x, x = y)
+  (h1 : a = b)
+  (h2 : b = c)
+  (h3 : c = d)
+  (h4 : d = e) :
+  a = e := by
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : a = (fun x => f x) a) :
+  a = f a := by
+  egg
+
 example (α : Type) (f : α -> α) (a : α)
   (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  a = f a := by
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, (f (f (f ( f x)))) = x)
   (h2 : a =  f (f (f (f ( f a))))) :
   a = f a := by
   egg
@@ -1033,4 +1103,16 @@ theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
   (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
   (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
   p (sf cemptySet) ↔ p cemptySet := by
+  egg
+
+example (α : Type) (sf : α -> α)
+  (h1 : ∀ x, x = sf (sf (sf x)))
+  (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
+  ∀ x, x = sf x := by
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  f a = a := by
   egg

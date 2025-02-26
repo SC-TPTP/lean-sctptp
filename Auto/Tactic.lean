@@ -814,10 +814,10 @@ def getHypExpr (n : Name) : TacticM Expr := withMainContext do
   let lctx ← getLCtx
   let .some localDecl := lctx.findFromUserName? n
     | throwError m!"{decl_name%} : Could not find {n} in context {lctx.getFVars}"
-  return ← instantiateMVars localDecl.type
+  return ← resolveTypes localDecl.type
 
 def getHypFromExpr (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
-  let mut e := e
+  let mut e ← resolveTypes e
   if addNot then
     e := mkApp (mkConst ``Not) e
   let lctx ← getLCtx
@@ -826,14 +826,13 @@ def getHypFromExpr (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := wi
     if ← isDefEq ty e then
       return decl
 
-  -- build error message by appending all hypotheses
-  e ← Core.betaReduce (← instantiateMVars e)
+  -- Build detailed error message
   let mut s := ""
   for decl in lctx do
     let ty ← Core.betaReduce (← instantiateMVars decl.type)
     s := s ++ s!"- {decl.userName} : {ty}\n"
   let goalStr ← (← getMainGoal).getType
-  throwError s!"Cannot find hypothesis for `{e}` in context:\n{s}\n|- {goalStr}"
+  throwError s!"Cannot find hypothesis for `{e}` (type: {← inferType e}) in context:\n{s}\n|- {goalStr}"
 
 def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainContext do
   getHypFromExpr e addNot >>= fun decl => return decl.userName
@@ -949,28 +948,30 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let eqHypName ← getHypName equality
     let eqHypNameSymm := Name.str eqHypName "symm"
     evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
-    let equality ← if backward then
-      getHypExpr eqHypNameSymm
-    else
-      pure equality
-    let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, t, u, (← getHypProof equality)]
-    evalTactic (← `(tactic| apply $(mkIdent P_u_hypName)))
-    evalApply subst
-    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent (Name.str P_u_hypName "0")):ident))
+    withMainContext do
+      let equality ← if backward then getHypExpr eqHypNameSymm else pure equality
+      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, t, u, (← getHypProof equality)]
+      evalTactic (← `(tactic| apply $(mkIdent P_u_hypName)))
+      evalApply subst
+      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent (Name.str P_u_hypName "0")):ident))
 
   | leftSubstEq i backward P => do
-    let equality := proofstep.antecedents[i]!
+    let P ← resolveTypes P
+    let equality ← resolveTypes proofstep.antecedents[i]!
     let (t, u) ← match equality with
       | Expr.app (.app (.app (.const ``Eq _) _) t) u =>
         if backward then pure (u, t) else pure (t, u)
       | _ => throwError s!"leftSubstEq: cannot find equality in the antecedent form {equality}"
-    let eqHypName ← getHypName equality
     let P_u_hypName ← getHypName (P.app u)
-    let newHypName := Name.str P_u_hypName "0"
-    -- TODO: use (motive := P)
-    -- TODO: apply does not work here because it is not negated
-    evalTactic (← `(tactic| apply $(mkIdent P_u_hypName); first | apply Eq.subst $(mkIdent eqHypName) | apply Eq.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
-    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
+    let eqHypName ← getHypName equality
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then pure equality else getHypExpr eqHypNameSymm
+      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, u, t, (← getHypProof equality)]
+      haveExpr psName (P.app t)
+      evalApply subst
+      evalTactic (← `(tactic| exact $(mkIdent P_u_hypName)))
 
   | rightSubstIff i backward R => do
     let R ← resolveTypes R
@@ -980,34 +981,33 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
         if backward then pure (psi, phi) else pure (phi, psi)
       | _ => throwError s!"rightSubstIff: cannot find equivalence in the antecedent form {equivalence}"
     let R_psi_hypName ← getHypName (R.app psi) true
-    let eqHypProof ← if backward then
-      let eqHypName ← getHypName equivalence
-      let eqHypNameSymm := Name.str eqHypName "symm"
-      evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
-      pure (← getHypProof (← getHypExpr eqHypNameSymm))
-    else
-      pure (← getHypProof equivalence)
-    let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[phi, psi, R, eqHypProof])
-    evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName)))
-    evalApply subst
-    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent (Name.str R_psi_hypName "0")):ident))
+    let eqHypName ← getHypName equivalence
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then getHypExpr eqHypNameSymm else pure equivalence
+      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[phi, psi, R, (← getHypProof equality)])
+      evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName)))
+      evalApply subst
+      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent (Name.str R_psi_hypName "0")):ident))
 
   | leftSubstIff i backward R => do
-    let equivalence := proofstep.antecedents[i]!
+    let R ← resolveTypes R
+    let equivalence ← resolveTypes proofstep.antecedents[i]!
     let (phi, psi) ← match equivalence with
       | Expr.app (.app (.const ``Iff _) phi) psi =>
-        if backward then
-          pure (psi, phi)
-        else
-          pure (phi, psi)
+        if backward then pure (psi, phi) else pure (phi, psi)
       | _ => throwError s!"leftSubstIff: cannot find equivalence in the antecedent form {equivalence}"
-    let eqHypName ← getHypName equivalence
     let R_psi_hypName ← getHypName (R.app psi)
-    let newHypName := Name.str R_psi_hypName "0"
-    -- TODO: use (p := P)
-    -- TODO: apply does not work here because it is not negated
-    evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName); first | apply Iff.subst $(mkIdent eqHypName) | apply Iff.subst $(mkIdent eqHypName).symm | rw [$(mkIdent eqHypName):term] | rw [←$(mkIdent eqHypName):term]))
-    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent newHypName):ident))
+    let eqHypName ← getHypName equivalence
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then pure equivalence else getHypExpr eqHypNameSymm
+      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[psi, phi, R, (← getHypProof equality)])
+      haveExpr psName (R.app phi)
+      evalApply subst
+      evalTactic (← `(tactic| exact $(mkIdent R_psi_hypName)))
 
   | instFun funName termStr args => do evalTactic (← `(tactic| sorry))
   | instPred predName formula args => do evalTactic (← `(tactic| sorry))
@@ -1104,9 +1104,13 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
     trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
-    applyProofStep proofstep premisesProofstep.toArray
-    for premise in premises do
-      reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
+    try
+      applyProofStep proofstep premisesProofstep.toArray
+      for premise in premises do
+        reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
+    catch e =>
+      trace[auto.tptp.printProof] "Error in step {proofstep.name}: {e.toMessageData}"
+      throwError "Error reconstructing proof at step {proofstep.name}: {e.toMessageData}"
 
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver

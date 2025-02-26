@@ -411,28 +411,12 @@ namespace Lam2D
   | .forallEI _ => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
   | .existEI _  => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
   | .iteI _     => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
-  | .eq s       => do
-    let rawTy ←
-      match s with
-      | .base .int => Meta.mkFreshExprMVar none
-      | _          => interpLamSortAsUnliftedWithInference tyVal s
-    let ty ← instantiateMVars rawTy
-    return ← Meta.mkAppOptM ``Eq #[ty]
-    -- return ←  Meta.mkAppOptM ``Eq #[← interpLamSortAsUnliftedWithInference tyVal s]
-  | .forallE s  => do
-    let ty ← interpLamSortAsUnliftedWithInference tyVal s
-    let sort ← Expr.normalizeType (← Meta.inferType ty)
-    let Expr.sort lvl := sort
-      | throwError "{decl_name%} :: Unexpected sort {sort}"
-    let .some (.defnInfo forallVal) := (← getEnv).find? ``forallF
-      | throwError "{decl_name%} :: Unexpected error"
-    let forallFExpr := forallVal.value.instantiateLevelParams forallVal.levelParams [lvl, .zero]
-    return mkAppN forallFExpr #[ty]
-  | .existE s  => do
-    return ← Meta.mkAppOptM ``Exists #[← interpLamSortAsUnliftedWithInference tyVal s]
-  | .ite s     => do
-    return ← Meta.mkAppOptM ``Bool.ite' #[← interpLamSortAsUnliftedWithInference tyVal s]
+  | .eq _       => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
+  | .forallE _  => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
+  | .existE _   => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
+  | .ite _      => throwError (decl_name% ++ " :: " ++ LamExportUtils.exportError.ImpPolyLog)
 
+  open Auto.Embedding.Lam in
   /--
     Takes a `t : LamTerm` and produces the `un-lifted` version of `t.interp`.
     `lctx` is for pretty printing
@@ -459,20 +443,28 @@ namespace Lam2D
     let tinterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx.succ t
     let name := (`eb!).appendIndexAfter lctx
     return .lam name sinterp tinterp .default
+  | .app s (.app _ (.base (.eq _)) t₁) t₂ => do -- equality
+    let t₁interp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx t₁
+    let t₂interp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx t₂
+    let sort ← interpLamSortAsUnliftedWithInference tyVal s
+    let u ← Meta.getLevel sort
+    return mkApp3 (.const ``Eq [u]) sort t₁interp t₂interp
+  | .app (.func _ (.base .prop)) (.base (.forallE _)) p => do -- universal quantification
+    let pinterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx p
+    match pinterp with
+    | .lam n t b bod => return .forallE n t b bod
+    | _ => throwError "{decl_name%}: Unexpected non-lambda term {pinterp}"
+  | .app (.func s (.base .prop)) (.base (.existE _)) p => do -- existential quantification
+    let sort ← interpLamSortAsUnliftedWithInference tyVal s
+    let u ← Meta.getLevel sort
+    let pinterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx p
+    match pinterp with
+    | .lam n t b bod => return mkApp2 (.const ``Exists [u]) t (.lam n t b bod)
+    | _ => throwError "{decl_name%}: Unexpected non-lambda term {pinterp}"
   | .app _ fn arg => do
     let arginterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx arg
-    match fn with
-    | .base b =>
-      if b.isForallE then
-        match arginterp with
-        | .lam n t b bod => return .forallE n t b bod
-        | _ => throwError "{decl_name%}: Yann's assumption failed: argument is not a lambda, {arginterp}"
-      else
-        let fninterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx fn
-        return .app fninterp arginterp
-    | _ =>
-      let fninterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx fn
-      return .app fninterp arginterp
+    let fninterp ← interpLamTermAsUnliftedWithInference tyVal varVal etomVal lctx fn
+    return .app fninterp arginterp
 
 end Lam2D
 

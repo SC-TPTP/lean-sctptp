@@ -1035,8 +1035,7 @@ open Lam2D LamReif in
 def lamTerm2Expr (t : Embedding.Lam.LamTerm) : ReifM Expr := do
   let tyValMap := Std.HashMap.ofList ((← getTyVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
   let varValMap := Std.HashMap.ofList ((← getVarVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
-  -- interpLamTermAsUnlifted tyValMap varValMap .empty 0 t
-  interpLamTermAsUnliftedWithInference tyValMap varValMap .empty 0 t
+  instantiateMVars (← interpLamTermAsUnliftedWithInference tyValMap varValMap .empty 0 t)
 
 
 inductive InferenceRule where
@@ -1413,10 +1412,7 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
                 | lc => panic! s!"Unexpected LamConstr {lc}, expected term"
             | _ => panic! "Expected list of consequents"
 
-            let antecedents ← antecedents.mapM (lamTerm2Expr ·)
-            let consequents ← consequents.mapM (lamTerm2Expr ·)
-
-            pure (antecedents, consequents)
+            pure (← antecedents.mapM (lamTerm2Expr ·), ← consequents.mapM (lamTerm2Expr ·))
           | _ => throwError s!"Unexpected number of formulas in sequent: {sequent}"
 
         -- ### Reifing the inference record

@@ -487,7 +487,7 @@ partial def LamTerm.toStringLCtx (lctx : Nat) : LamTerm → String
   else
     s!"⟨{m - lctx}⟩"
 | .lam s t => s!"(λx{lctx} : {s}, {toStringLCtx (.succ lctx) t})"
-| t@(.app ..) =>
+| t@(.app s ..) =>
   let fn := t.getAppFn
   let args := t.getAppArgs
   match fn with
@@ -514,7 +514,7 @@ partial def LamTerm.toStringLCtx (lctx : Nat) : LamTerm → String
     | 2 =>
       match args with
       | [(_, arg)] => s!"({toStringLCtx lctx arg} {b})"
-      | [(_, arg₁), (_, arg₂)] => s!"({toStringLCtx lctx arg₁} {b} {toStringLCtx lctx arg₂})"
+      | [(_, arg₁), (_, arg₂)] => s!"({toStringLCtx lctx arg₁} {b}({s}) {toStringLCtx lctx arg₂})"
       | _ => "❌"
     | _ =>
       match b with

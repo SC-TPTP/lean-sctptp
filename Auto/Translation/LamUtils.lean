@@ -394,7 +394,7 @@ namespace Lam2D
     let .some e := tyVal.get? n
       | throwError "{decl_name%} :: Cannot find fvarId assigned to type atom {n}"
     return e
-  | .base .int => return ← (Meta.mkFreshExprMVar none)
+  | .base .int => Meta.mkFreshTypeMVar
   | .base b => return Lam2D.interpLamBaseSortAsUnlifted b
   | .func s₁ s₂ => do
     return .forallE `_ (← interpLamSortAsUnliftedWithInference tyVal s₁) (← interpLamSortAsUnliftedWithInference tyVal s₂) .default

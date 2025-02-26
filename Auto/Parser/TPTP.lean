@@ -709,7 +709,7 @@ partial def term2LamTerm (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap Strin
     match processVar pi var lctx with
     | .some (name, s) =>
       match term2LamTerm pi ⟨.op "!", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
-      | .term (.base .prop) body => .term (.base .prop) (.mkForallEF s body)
+      | .term (.base .prop) body => .term (.base .prop) (.mkForallE s body)
       | r => .error s!"Unexpected term {t} produces ({r})"
     | r => .error s!"Unexpected term {t} produces ({r})"
   | ⟨.op "!>", body :: var :: tail⟩ =>
@@ -730,7 +730,7 @@ partial def term2LamTerm (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap Strin
     match processVar pi var lctx with
     | .some (name, s) =>
       match term2LamTerm pi ⟨.op "?", body :: tail⟩ (lctx.insert name (lctx.size, s)) with
-      | .term (.base .prop) body => .term (.base .prop) (.mkExistEF s body)
+      | .term (.base .prop) body => .term (.base .prop) (.mkExistE s body)
       | r => .error s!"Unexpected term {t} produces ({r})"
     | r => .error s!"Unexpected term {t} produces ({r})"
   | ⟨.op "!", body :: []⟩ | ⟨.op "!>", body :: []⟩ | ⟨.op "^", body :: []⟩ | ⟨.op "?", body :: []⟩ =>
@@ -1374,6 +1374,12 @@ def ProofStep.toString : ProofStep → String
 instance : ToString ProofStep where
   toString := ProofStep.toString
 
+def term2Expr (pi : ParsingInfo) (t : Term) : LamReif.ReifM Expr :=
+  match term2LamTermSCTPTP pi t {} with
+  | .term _ t => lamTerm2Expr t
+  | .error e => throwError e
+  | lc => throwError s!"Unexpected LamConstr {lc}, expected term"
+
 open Embedding.Lam in
 /--
   Turn SC-TPTP proof into reified ProofSteps
@@ -1386,37 +1392,29 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
   for ⟨cmd, args⟩ in cmds do
     match cmd with
     | "fof" =>
+      trace[auto.tptp.printProof] "###########################################"
+      trace[auto.tptp.printProof] "# {decl_name%}: {cmd} {args}"
       match args with
-      | [⟨.ident name, []⟩, ⟨.ident "plain", _⟩, sequent, inferTerm] =>
-        trace[auto.tptp.printProof] "###########################################"
-        trace[auto.tptp.printProof] "######### getSCTPTPProof: {cmd} {args}"
+      | ⟨.ident name, []⟩ :: ⟨.ident formulaKind, _⟩ :: sequent :: tail =>
+        -- ### Reifing the inference record
+        let infRec : InferenceRecord ← match formulaKind with
+          | "axiom" => pure ⟨.hyp 0, []⟩
+          | "plain" => match tail with
+            | inferTerm :: [] => parseInferenceRecord inferTerm
+            | _ => throwError s!"Unexpected formula kind: {formulaKind}"
+          | _ => continue
 
         -- ### Reifing the sequent
         let (antecedents, consequents) ← match sequent with
           | ⟨.op "-->", antecedents :: consequents :: []⟩ =>
-            -- antecedents and consequents are lists of formulas
-            let antecedents := match antecedents with
-            | ⟨.ident "list", antecedents⟩ =>
-              antecedents.map fun a =>
-                match term2LamTermSCTPTP pi a with
-                | .term _ t => t
-                | .error e => panic! e
-                | lc => panic! s!"Unexpected LamConstr {lc}, expected term"
-            | _ => panic! "Expected list of antecedents"
-            let consequents := match consequents with
-            | ⟨.ident "list", consequents⟩ =>
-              consequents.map fun a =>
-                match term2LamTermSCTPTP pi a with
-                | .term _ t => t
-                | .error e => panic! e
-                | lc => panic! s!"Unexpected LamConstr {lc}, expected term"
-            | _ => panic! "Expected list of consequents"
-
-            pure (← antecedents.mapM (lamTerm2Expr ·), ← consequents.mapM (lamTerm2Expr ·))
-          | _ => throwError s!"Unexpected number of formulas in sequent: {sequent}"
-
-        -- ### Reifing the inference record
-        let infRec : InferenceRecord ←  parseInferenceRecord inferTerm
+            let antecedents ← match antecedents with
+            | ⟨.ident "list", antecedents⟩ => antecedents.mapM (term2Expr pi)
+            | _ => throwError "Expected list of antecedents"
+            let consequents ← match consequents with
+            | ⟨.ident "list", consequents⟩ => consequents.mapM (term2Expr pi)
+            | _ => throwError "Expected list of consequents"
+            pure (antecedents, consequents)
+          | consequent => pure ([], [← term2Expr pi consequent])
 
         -- ### Instantiating the proof step
         let step := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩

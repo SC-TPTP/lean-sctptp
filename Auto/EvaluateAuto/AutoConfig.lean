@@ -67,8 +67,7 @@ def withAutoSolverConfigOptions
       | .zipperposition => auto.tptp.zipperposition.path.set o path
       | .zeport _       => auto.tptp.zeport.path.set o path
       | .eproverHo      => auto.tptp.eproverHo.path.set o path
-      | .vampire        => auto.tptp.vampire.path.set o path
-      | .egg            => auto.tptp.egg.path.set o path) <|
+      | .vampire        => auto.tptp.vampire.path.set o path) <|
         k
 
 end EvalAuto

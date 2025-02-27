@@ -54,7 +54,6 @@ inductive SolverName where
   -- E prover, higher-order version
   | eproverHo
   | vampire
-  | egg
 deriving BEq, Hashable, Inhabited, Repr
 
 instance : ToString SolverName where
@@ -66,7 +65,6 @@ instance : ToString SolverName where
     | .lams => "zeport-lams"
   | .eproverHo => "eprover-ho"
   | .vampire => "vampire"
-  | .egg => "egg"
 
 instance : Lean.KVMap.Value SolverName where
   toDataValue n := toString n
@@ -76,7 +74,6 @@ instance : Lean.KVMap.Value SolverName where
   | "zeport-lams" => some (.zeport .lams)
   | "eprover-ho" => some .eproverHo
   | "vampire" => some .vampire
-  | "egg" => some .egg
   | _ => none
 
 end Auto.Solver.TPTP
@@ -110,6 +107,11 @@ register_option auto.tptp.vampire.path : String := {
 register_option auto.tptp.egg.path : String := {
   defValue := "egg"
   descr := "Path to egg prover"
+}
+
+register_option auto.tptp.goeland.path : String := {
+  defValue := "goeland"
+  descr := "Path to goeland prover"
 }
 
 namespace Auto.Solver.TPTP
@@ -194,9 +196,19 @@ def queryVampire (query : String) : MetaM (Bool × String) := do
   let proven := (stdout.splitOn "Refutation found. Thanks to Tanya!").length >= 2
   return (proven, stdout)
 
-def queryEgg (query : String) : MetaM (Bool × String) := do
+def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
+  if !(auto.tptp.get (← getOptions)) then
+    throwError "{decl_name%} :: Unexpected error"
+  let (proven, stdout) ← (do
+    match auto.tptp.solver.name.get (← getOptions) with
+    | .zipperposition => queryZipperposition query
+    | .zeport zept    => queryZEPort zept query
+    | .eproverHo      => queryE query
+    | .vampire        => queryVampire query)
+  return (proven, ← Parser.TPTP.parse stdout)
+
+def queryEggSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   let path := auto.tptp.egg.path.get (← getOptions)
-  -- write query to a file
   IO.FS.withFile "./.egg_problem.p" .writeNew (fun stream => stream.putStr query)
   IO.FS.withFile "./.egg_problem_sol.p" .writeNew (fun stream => stream.putStr "")
   let solver ← createAux path #["--level1", "./.egg_problem.p", "./.egg_problem_sol.p"]
@@ -211,19 +223,25 @@ def queryEgg (query : String) : MetaM (Bool × String) := do
     trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
   IO.FS.removeFile "./.egg_problem.p"
   IO.FS.removeFile "./.egg_problem_sol.p"
-  return (proven, proof)
+  return (proven, ← Parser.TPTP.parse proof)
 
-def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
-  if !(auto.tptp.get (← getOptions)) then
-    throwError "{decl_name%} :: Unexpected error"
-  let (proven, stdout) ← (do
-    match auto.tptp.solver.name.get (← getOptions) with
-    | .zipperposition => queryZipperposition query
-    | .zeport zept    => queryZEPort zept query
-    | .eproverHo      => queryE query
-    | .vampire        => queryVampire query
-    | .egg            => queryEgg query)
-  return (proven, ← Parser.TPTP.parse stdout)
+def queryGoelandSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
+  let path := auto.tptp.goeland.path.get (← getOptions)
+  IO.FS.withFile "./.goeland_problem.p" .writeNew (fun stream => stream.putStr query)
+  IO.FS.withFile "./.goeland_problem_sol.p" .writeNew (fun stream => stream.putStr "")
+  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", "-proof_file=.goeland_problem_sol.p", "./.goeland_problem.p"]
+  let stdout ← solver.stdout.readToEnd
+  let stderr ← solver.stderr.readToEnd
+  solver.kill
+  let proven := (stdout == "" ∧ stderr == "")
+  let proof ← IO.FS.readFile "./.goeland_problem_sol.p"
+  if proven then
+    trace[auto.tptp.result] "Proof: \n{proof}"
+  else
+    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
+  IO.FS.removeFile "./.goeland_problem.p"
+  IO.FS.removeFile "./.goeland_problem_sol.p"
+  return (proven, ← Parser.TPTP.parse proof)
 
 end Solver.TPTP
 

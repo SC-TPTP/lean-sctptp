@@ -26,6 +26,7 @@ syntax uord := atomic(unfolds) <|> defeqs
 syntax autoinstr := ("👍" <|> "👎")?
 syntax (name := auto) "auto" autoinstr hints (uord)* : tactic
 syntax (name := egg) "egg" autoinstr hints (uord)* : tactic
+syntax (name := goeland) "goeland" autoinstr hints (uord)* : tactic
 syntax (name := mononative) "mononative" hints (uord)* : tactic
 syntax (name := intromono) "intromono" hints (uord)* : tactic
 
@@ -727,30 +728,6 @@ theorem forall_or_prenex (p) (q : α → Prop) : (∀ a, q a) ∨ p ↔ ∀ a, q
       | Or.inr hp' => contradiction
 
 
-open Embedding.Lam in
-def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
-  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
-  let lamEVarTy ← LamReif.getLamEVarTy
-  let exportLamTerms ← exportFacts.mapM (fun re => do
-    match re with
-    | .valid [] t => return t
-    | _ => throwError "{decl_name%} :: Unexpected error")
-  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
-    lam2FOF lamVarTy lamEVarTy exportLamTerms
-  else
-    lam2TH0 lamVarTy lamEVarTy exportLamTerms
-  trace[auto.tptp.printQuery] "\n{query}"
-  let (proven, tptpProof) ← Solver.TPTP.querySolver query
-  if proven then
-    try
-      let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
-      return proofSteps
-    catch e =>
-      throwError "Egg found a proof, but proof reification failed with {e.toMessageData}"
-  else
-    throwError "Egg failed to find proof"
-
-
 open Lean Elab Tactic Meta
 
 /--
@@ -861,61 +838,56 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | leftAnd i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
 
   | leftOr i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent psName):ident))
 
   | leftImplies i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
     evalTactic (← `(tactic| rw [imp_iff_not_or] at $(mkIdent hypName):ident))
-    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent psName):ident))
 
   | leftIff i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
 
   | leftNot _ => pure ()
 
   | leftEx i y => do
     let hypName ← getHypName proofstep.consequents[i]! true
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| rcases $(mkIdent hypName):ident with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent newHypName)⟩))
+    evalTactic (← `(tactic| rcases $(mkIdent hypName):ident with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
 
   | leftForall i t => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
+    trace[auto.tptp.printProof] "leftForall: {hypName}"
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     match t with
-    | none => evalTactic (← `(tactic| specialize $(mkIdent newHypName):ident ‹_›))
-    | some t => evalSpecialize newHypName t
+    | none => evalTactic (← `(tactic| specialize $(mkIdent psName):ident ‹_›))
+    | some t => evalSpecialize psName t
 
   | rightAnd i => do
     let hypName ← getHypName proofstep.antecedents[i]! true
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent hypName)) <;> rename_i $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent hypName)) <;> rename_i $(mkIdent psName):ident))
 
   | rightOr i => do
     let hypName ← getHypName proofstep.antecedents[i]! true
-    let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| rcases (not_or.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
 
   | rightImplies i => do
     let hypName ← getHypName proofstep.consequents[i]! true
-    let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| rcases (Classical.not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1):ident, $(mkIdent hypName2)⟩))
 
   | rightIff i => do
     let hypName ← getHypName proofstep.consequents[i]! true
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName):ident := $(mkIdent hypName):ident))
-    evalTactic (← `(tactic| rw [iff_iff_implies_and_implies] at $(mkIdent newHypName):ident))
-    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent newHypName)) <;> rename_i $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| have $(mkIdent psName):ident := $(mkIdent hypName):ident))
+    evalTactic (← `(tactic| rw [iff_iff_implies_and_implies] at $(mkIdent psName):ident))
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent psName)) <;> rename_i $(mkIdent psName):ident))
 
   | rightNot i => do
     let hypName ← getHypName proofstep.consequents[i]! true
@@ -923,17 +895,15 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | rightEx i t => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
-    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
     match t with
-    | none => evalTactic (← `(tactic| specialize $(mkIdent newHypName) ‹_›))
-    | some t => evalSpecialize newHypName t
+    | none => evalTactic (← `(tactic| specialize $(mkIdent psName) ‹_›))
+    | some t => evalSpecialize psName t
 
   | rightForall i y => do
     let hypName ← getHypName proofstep.consequents[i]! true
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent newHypName)⟩))
+    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
 
   | rightRefl _ => do evalTactic (← `(tactic| contradiction))
 
@@ -953,7 +923,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, t, u, (← getHypProof equality)]
       evalTactic (← `(tactic| apply $(mkIdent P_u_hypName)))
       evalApply subst
-      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent (Name.str P_u_hypName "0")):ident))
+      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
 
   | leftSubstEq i backward P => do
     let P ← resolveTypes P
@@ -989,7 +959,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[phi, psi, R, (← getHypProof equality)])
       evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName)))
       evalApply subst
-      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent (Name.str R_psi_hypName "0")):ident))
+      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
 
   | leftSubstIff i backward R => do
     let R ← resolveTypes R
@@ -1015,50 +985,45 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
 
   -- Level 2
-  | congruence => do evalTactic (← `(tactic| repeat trivial))
+  | congruence => do evalTactic (← `(tactic| cc))
   | leftHyp _ _ => do evalTactic (← `(tactic| contradiction))
 
   | leftNotAnd i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent hypName)) <;> rename_i $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent hypName)) <;> rename_i $(mkIdent psName):ident))
 
   | leftNotOr i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| rcases (not_or.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
 
   | leftNotImplies i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let (hypName1, hypName2) := (Name.str hypName "1", Name.str hypName "2")
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| rcases (not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
 
   | leftNotIff i => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
-    evalTactic (← `(tactic| rw [iff_iff_implies_and_implies] at $(mkIdent newHypName):ident))
-    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent newHypName)) <;> rename_i $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [iff_iff_implies_and_implies] at $(mkIdent psName):ident))
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent psName)) <;> rename_i $(mkIdent psName):ident))
 
   | leftNotNot i =>
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
-    evalTactic (← `(tactic| rw [Classical.not_not] at $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [Classical.not_not] at $(mkIdent psName):ident))
 
   | leftNotEx i t => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
-    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent newHypName):ident))
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
     match t with
-    | none => evalTactic (← `(tactic| specialize $(mkIdent newHypName) ‹_›))
-    | some t => evalSpecialize newHypName t
+    | none => evalTactic (← `(tactic| specialize $(mkIdent psName) ‹_›))
+    | some t => evalSpecialize psName t
 
   | leftNotAll i y => do
     let hypName ← getHypName proofstep.antecedents[i]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent newHypName)⟩))
+    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
 
   -- Level 3
   | rightRelIff _ => do evalTactic (← `(tactic| trivial))
@@ -1072,19 +1037,17 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
   | rightNnf i j => do
     let hypName ← getHypName proofstep.consequents[i]! true
     let targetExpr := mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[j]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     haveExpr psName targetExpr
-    evalTactic (← `(tactic| push_neg; push_neg at $(mkIdent newHypName):ident; assumption))
+    evalTactic (← `(tactic| push_neg; push_neg at $(mkIdent psName):ident; assumption))
 
   | rightPrenex i j => do
     let hypName ← getHypName proofstep.consequents[i]! true
     let targetExpr := mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[j]!
-    let newHypName := Name.str hypName "0"
-    evalTactic (← `(tactic| have $(mkIdent newHypName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     haveExpr psName targetExpr
     try
-      evalTactic (← `(tactic| repeat (simp -failIfUnchanged only [imp_iff_not_or, and_forall_prenex, and_exists_prenex, exists_and_prenex, forall_and_prenex, or_forall_prenex, or_exists_prenex, exists_or_prenex, forall_or_prenex] at $(mkIdent newHypName):ident; try push_neg at $(mkIdent newHypName):ident)))
+      evalTactic (← `(tactic| repeat (simp -failIfUnchanged only [imp_iff_not_or, and_forall_prenex, and_exists_prenex, exists_and_prenex, forall_and_prenex, or_forall_prenex, or_exists_prenex, exists_or_prenex, forall_or_prenex] at $(mkIdent psName):ident; try push_neg at $(mkIdent psName):ident)))
       evalTactic (← `(tactic| repeat (simp -failIfUnchanged only [imp_iff_not_or, and_forall_prenex, and_exists_prenex, exists_and_prenex, forall_and_prenex, or_forall_prenex, or_exists_prenex, exists_or_prenex, forall_or_prenex]; try push_neg)))
       evalTactic (← `(tactic| assumption))
     catch e =>
@@ -1092,6 +1055,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | clausify _ => do evalTactic (← `(tactic| tauto))
   | elimIffRefl i j => do evalTactic (← `(tactic| sorry))
+  | res i => do evalTactic (← `(tactic| sorry))
   | instMult triplets => do evalTactic (← `(tactic| sorry))
 
 
@@ -1106,11 +1070,33 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
     try
       applyProofStep proofstep premisesProofstep.toArray
-      for premise in premises do
-        reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
     catch e =>
-      trace[auto.tptp.printProof] "Error in step {proofstep.name}: {e.toMessageData}"
       throwError "Error reconstructing proof at step {proofstep.name}: {e.toMessageData}"
+    for premise in premises do
+      reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
+
+open Embedding.Lam in
+def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
+  let lamEVarTy ← LamReif.getLamEVarTy
+  let exportLamTerms ← exportFacts.mapM (fun re => do
+    match re with
+    | .valid [] t => return t
+    | _ => throwError "{decl_name%} :: Unexpected error")
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  trace[auto.tptp.printQuery] "\n{query}"
+  let (proven, tptpProof) ← Solver.TPTP.queryEggSolver query
+  if proven then
+    try
+      let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
+      return proofSteps
+    catch e =>
+      throwError "Egg found a proof, but proof reification failed with {e.toMessageData}"
+  else
+    throwError "Egg failed to find proof"
 
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
@@ -1132,18 +1118,13 @@ where
     let exportFacts ← LamReif.reifFacts uvalids
     let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
     let _ ← LamReif.reifInhabitations uinhs
-    -- let exportInds ← LamReif.reifMutInds minds
     LamReif.printValuation
-    -- -- **Preprocessing in Verified Checker**
-    -- let (exportFacts', _) ← LamReif.preprocess exportFacts exportInds
-    -- exportFacts := exportFacts'
     -- **TPTP invocation and Premise Selection**
     if auto.tptp.get (← getOptions) then
       let proofsteps ← queryTPTPEgg exportFacts
       return proofsteps
     throwError "auto.tptp is not enabled"
 
-#check LocalContext
 @[tactic egg]
 def evalEgg : Tactic
 | `(egg | egg $instr $hints $[$uords]*) => withMainContext do
@@ -1178,12 +1159,98 @@ def evalEgg : Tactic
     goal.assign proof
 | _ => throwUnsupportedSyntax
 
+
+open Embedding.Lam in
+def queryTPTPGoeland (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
+  let lamEVarTy ← LamReif.getLamEVarTy
+  let exportLamTerms ← exportFacts.mapM (fun re => do
+    match re with
+    | .valid [] t => return t
+    | _ => throwError "{decl_name%} :: Unexpected error")
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  trace[auto.tptp.printQuery] "\n{query}"
+  let (proven, tptpProof) ← Solver.TPTP.queryGoelandSolver query
+  if proven then
+    try
+      let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
+      return proofSteps
+    catch e =>
+      throwError "Goeland found a proof, but proof reification failed with {e.toMessageData}"
+  else
+    throwError "Goeland failed to find proof"
+
+/--
+  Run `auto`'s monomorphization and preprocessing, then send the problem to Goeland solver
+-/
+def runGoeland
+  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  withDefault do
+    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
+    let lemmas ← rewriteIteCondDecide lemmas
+    let (proofsteps, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.ProofStep)) do
+      let s ← get
+      let u ← computeMaxLevel s.facts
+      (reifMAction s.facts s.inhTys s.inds).run' {u := u})
+    return proofsteps
+where
+  reifMAction
+    (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
+    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+    let exportFacts ← LamReif.reifFacts uvalids
+    let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
+    let _ ← LamReif.reifInhabitations uinhs
+    LamReif.printValuation
+    -- **TPTP invocation and Premise Selection**
+    if auto.tptp.get (← getOptions) then
+      let proofsteps ← queryTPTPGoeland exportFacts
+      return proofsteps
+    throwError "auto.tptp is not enabled"
+
+@[tactic goeland]
+def evalGoeland : Tactic
+| `(goeland | goeland $instr $hints $[$uords]*) => withMainContext do
+  let goal ← getMainGoal
+  let currentGoalName := `_currentGoalName
+  liftMetaTactic fun g => do
+    let [newG] ← g.apply (.const ``Classical.byContradiction [])
+      | throwError "{decl_name%} :: Too many arguments"
+    let newG ← newG.introN 1 [currentGoalName]
+    return [newG.2]
+
+  let instr ← parseInstr instr
+  match instr with
+  | .none => withMainContext do
+    let (lemmas, inhFacts) ← collectAllLemmas hints uords #[FVarId.mk `_currentGoalName]
+    let proofsteps ← runGoeland lemmas inhFacts
+
+    trace[auto.tptp.printProof] "Proof steps (forward):"
+    for step in proofsteps do
+      trace[auto.tptp.printProof] "  {step}"
+
+    try
+      let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
+      for (proofstep, i) in proofsteps.zipWithIndex do
+        proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+      trace[auto.tptp.printProof] "Proof steps (backward):"
+      reconstructProof proofsteps proofStepNameToIndex
+    catch e =>
+      throwError "Goeland found a proof, but reconstruction failed with:\n{e.toMessageData}"
+  | .useSorry =>
+    let proof ← mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
+    goal.assign proof
+| _ => throwUnsupportedSyntax
+
+
 end Auto
 
 
 set_option auto.tptp true
-set_option auto.tptp.solver.name "egg"
 set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
+set_option auto.tptp.goeland.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/goeland_linux_release"
 set_option auto.mono.mode "fol"
 
 set_option trace.auto.tptp.printQuery true
@@ -1191,13 +1258,13 @@ set_option trace.auto.tptp.printProof true
 set_option trace.auto.tptp.result true
 set_option trace.auto.lamReif.printValuation true
 
-set_option pp.explicit true
-set_option pp.mvars true
-set_option pp.funBinderTypes true
-set_option pp.all true
-set_option pp.piBinderTypes true
-set_option pp.letVarTypes true
-set_option pp.mvars.withType true
+-- set_option pp.explicit true
+-- set_option pp.mvars true
+-- set_option pp.funBinderTypes true
+-- set_option pp.all true
+-- set_option pp.piBinderTypes true
+-- set_option pp.letVarTypes true
+-- set_option pp.mvars.withType true
 
 example : A ↔ A := by
   egg
@@ -1216,30 +1283,22 @@ example (α : Type) (a b : α)
   egg
 
 example (α : Type) (a b : α)
+  (h : ∀ y : α, y = a) :
+  a = b := by
+  egg
+
+-- shadowing hypothesis h makes our implementation fail
+example (α : Type) (a b : α)
   (h : ∀ y : α, y = a)
-  (h1 : a = b) :
+  (h : ∀ y : Nat, y = y) :
   a = b := by
   egg
 
 example (α : Type) (a b c d e : α)
   (h : ∃ y : α, y = a)
-  -- (h : ∀ y : α, y = a)
-  (h : ∀ y : Nat, y = y)
-  (h : ∀ x y : Nat, x = x)
-  (h : ∀ y : Nat, ∃ x, x = y)
-  (h1 : a = b)
-  (h2 : b = c)
-  (h3 : c = d)
-  (h4 : d = e) :
-  a = e := by
-  egg
-
-example (α : Type) (a b c d e : α)
-  (h : ∃ y : α, y = a)
-  (h : ∀ y : α, y = a)
-  (h : ∀ y : Nat, y = y)
-  (h : ∀ x y : Nat, x = x)
-  (h : ∀ y : Nat, ∃ x, x = y)
+  (ha : ∀ y : Nat, y = y)
+  (hb : ∀ x y : Nat, x = x)
+  (hc : ∀ y : Nat, ∃ x, x = y)
   (h1 : a = b)
   (h2 : b = c)
   (h3 : c = d)
@@ -1288,6 +1347,12 @@ theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
   p (sf cemptySet) ↔ p cemptySet := by
   egg
 
+example (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
+  (h1 : ∀ x, p x = p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
+  (h2 : ∀ x, p x = p (sf (sf (sf (sf (sf x)))))) :
+  p (sf cemptySet) = p cemptySet := by
+  egg
+
 example (α : Type) (sf : α -> α)
   (h1 : ∀ x, x = sf (sf (sf x)))
   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
@@ -1299,3 +1364,38 @@ example (α : Type) (f : α -> α) (a : α)
   (h2 : a =  f (f (f (f ( f a))))) :
   f a = a := by
   egg
+
+theorem buveurs (α : Type) [Inhabited α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
+  goeland
+
+
+example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (X c : α) (h1 : q (g (X, (f X)))) :
+  q (g ((f c), (f (f c)))) := by
+  apply Classical.byContradiction; intro h
+  -- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
+  generalize (f c) = X at h
+  sorry
+
+-- fof(a1, axiom, [A] --> []).
+-- fof(f1, plain, [p(b, c) ] --> [], inference(instPred, [status(thm), 'A', $fof(p(b, c)), []], [a1])).
+example (α : Type) (p : α × α → Prop) (A : Prop) (b c : α) (h1 : A) : p (b, c) := by
+  apply Classical.byContradiction; intro h
+  -- fof(f1, plain, [p(b, c) ] --> [], inference(instPred, [status(thm), 'A', $fof(p(b, c)), []], [a1])).
+  generalize (p (b, c)) = A at *
+  sorry
+
+-- fof(a2, axiom, [q(g(X, f(X)))] --> []).
+-- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
+example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (f (c), f (f (c))))) : False := by
+  apply Classical.byContradiction; intro h
+  -- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
+  generalize (f c) = X at *
+  sorry
+
+-- fof(a6, axiom, [q(F(c))] --> []).
+-- fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6])).
+example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (c, c))) : False := by
+  apply Classical.byContradiction; intro h
+  -- fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6])).
+  generalize (f X) = g (X, X) at *
+  sorry

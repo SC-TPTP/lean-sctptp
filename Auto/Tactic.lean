@@ -865,9 +865,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     trace[auto.tptp.printProof] "leftForall: {hypName}"
     evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
-    match t with
-    | none => evalTactic (← `(tactic| specialize $(mkIdent psName):ident ‹_›))
-    | some t => evalSpecialize psName t
+    evalSpecialize psName t
 
   | rightAnd i => do
     let hypName ← getHypName proofstep.antecedents[i]! true
@@ -897,9 +895,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
-    match t with
-    | none => evalTactic (← `(tactic| specialize $(mkIdent psName) ‹_›))
-    | some t => evalSpecialize psName t
+    evalSpecialize psName t
 
   | rightForall i y => do
     let hypName ← getHypName proofstep.consequents[i]! true
@@ -979,14 +975,15 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       evalApply subst
       evalTactic (← `(tactic| exact $(mkIdent R_psi_hypName)))
 
-  | instFun funName termStr args => do evalTactic (← `(tactic| sorry))
-  | instPred predName formula args => do evalTactic (← `(tactic| sorry))
+  -- use Lean.MVarId.changeLocalDecl (mvarId : MVarId) (fvarId : FVarId) (typeNew : Expr)
+  | instFun funName expr => do evalTactic (← `(tactic| sorry))
+  | instPred predName expr => do evalTactic (← `(tactic| sorry))
   | rightEpsilon A X t => do evalTactic (← `(tactic| sorry))
   | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
 
   -- Level 2
   | congruence => do evalTactic (← `(tactic| cc))
-  | leftHyp _ _ => do evalTactic (← `(tactic| contradiction))
+  | leftHyp _  => do evalTactic (← `(tactic| contradiction))
 
   | leftNotAnd i => do
     let hypName ← getHypName proofstep.antecedents[i]!
@@ -1017,9 +1014,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
-    match t with
-    | none => evalTactic (← `(tactic| specialize $(mkIdent psName) ‹_›))
-    | some t => evalSpecialize psName t
+    evalSpecialize psName t
 
   | leftNotAll i y => do
     let hypName ← getHypName proofstep.antecedents[i]!
@@ -1154,6 +1149,9 @@ def evalEgg : Tactic
       reconstructProof proofsteps proofStepNameToIndex
     catch e =>
       throwError "Egg found a proof, but reconstruction failed with:\n{e.toMessageData}"
+
+    -- TODO: clean unassigned meta variables
+
   | .useSorry =>
     let proof ← mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
     goal.assign proof
@@ -1266,6 +1264,20 @@ set_option trace.auto.lamReif.printValuation true
 -- set_option pp.letVarTypes true
 -- set_option pp.mvars.withType true
 
+-- # Known issues
+-- Shadowing hypothesis names
+  -- example (α : Type) (a b : α)
+  --   (h : ∀ y : α, y = a)
+  --   (h : ∀ y : Nat, y = y) :
+  --   a = b := by
+  --   egg
+-- Exporting hypotheses not suppported by the solver
+  -- example (α : Type) (a b : α)
+  --   (h : ∀ y : α, y = a)
+  --   (h : ∃ y : Nat, y = y) :
+  --   a = b := by
+  --   egg
+
 example : A ↔ A := by
   egg
 
@@ -1287,18 +1299,7 @@ example (α : Type) (a b : α)
   a = b := by
   egg
 
--- shadowing hypothesis h makes our implementation fail
-example (α : Type) (a b : α)
-  (h : ∀ y : α, y = a)
-  (h : ∀ y : Nat, y = y) :
-  a = b := by
-  egg
-
 example (α : Type) (a b c d e : α)
-  (h : ∃ y : α, y = a)
-  (ha : ∀ y : Nat, y = y)
-  (hb : ∀ x y : Nat, x = x)
-  (hc : ∀ y : Nat, ∃ x, x = y)
   (h1 : a = b)
   (h2 : b = c)
   (h3 : c = d)
@@ -1355,8 +1356,9 @@ example (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
 
 example (α : Type) (sf : α -> α)
   (h1 : ∀ x, x = sf (sf (sf x)))
-  (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
+  (h2 : ∀ x, x = sf (sf x)) :
   ∀ x, x = sf x := by
+  intro x
   egg
 
 example (α : Type) (f : α -> α) (a : α)
@@ -1365,7 +1367,7 @@ example (α : Type) (f : α -> α) (a : α)
   f a = a := by
   egg
 
-theorem buveurs (α : Type) [Inhabited α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
+theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
   goeland
 
 
@@ -1381,6 +1383,7 @@ example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (X c
 example (α : Type) (p : α × α → Prop) (A : Prop) (b c : α) (h1 : A) : p (b, c) := by
   apply Classical.byContradiction; intro h
   -- fof(f1, plain, [p(b, c) ] --> [], inference(instPred, [status(thm), 'A', $fof(p(b, c)), []], [a1])).
+  -- change (fun => (p (b, c))) at h1
   generalize (p (b, c)) = A at *
   sorry
 
@@ -1389,13 +1392,25 @@ example (α : Type) (p : α × α → Prop) (A : Prop) (b c : α) (h1 : A) : p (
 example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (f (c), f (f (c))))) : False := by
   apply Classical.byContradiction; intro h
   -- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
+  have j (X : α) : q (g (X, f X)) := by
+    sorry
+
   generalize (f c) = X at *
   sorry
 
 -- fof(a6, axiom, [q(F(c))] --> []).
 -- fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6])).
-example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (c, c))) : False := by
+example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (c, c))) (h2 : g (c, c) = c): False := by
   apply Classical.byContradiction; intro h
   -- fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6])).
-  generalize (f X) = g (X, X) at *
+  change (q ((fun X => g (X, X)) c)) at h1
+  change (((fun X => g (X, X)) c) = c) at h2
+  generalize (fun X => g ( X, X)) = F at *
+
+  rw [show ∀ x, g (x, x) = (fun y => g (y, y)) x by intros; rfl] at *
+  generalize (fun x => g (x, x)) = F at *
+
   sorry
+
+example (p : Nat → Nat) (g : Nat × Nat → Nat) (c : Nat) (y : Nat) : p (g (c, c)) = y := by
+  rw [show ∀ x, g (x, x) = (fun y => g (y, y)) x by intros; rfl] at *

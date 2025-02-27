@@ -209,7 +209,7 @@ def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := 
 
 def queryEggSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   let path := auto.tptp.egg.path.get (← getOptions)
-  IO.FS.withFile "./.egg_problem.p" .writeNew (fun stream => stream.putStr query)
+  IO.FS.withFile "./.egg_problem.p" .writeNew (fun stream => stream.putStr (query ++ "\n"))
   IO.FS.withFile "./.egg_problem_sol.p" .writeNew (fun stream => stream.putStr "")
   let solver ← createAux path #["--level1", "./.egg_problem.p", "./.egg_problem_sol.p"]
   let stdout ← solver.stdout.readToEnd
@@ -227,13 +227,13 @@ def queryEggSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) 
 
 def queryGoelandSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   let path := auto.tptp.goeland.path.get (← getOptions)
-  IO.FS.withFile "./.goeland_problem.p" .writeNew (fun stream => stream.putStr query)
+  IO.FS.withFile "./.goeland_problem.p" .writeNew (fun stream => stream.putStr (query ++ "\n"))
   IO.FS.withFile "./.goeland_problem_sol.p" .writeNew (fun stream => stream.putStr "")
-  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", "-proof_file=.goeland_problem_sol.p", "./.goeland_problem.p"]
+  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", "-proof_file=.goeland_problem_sol", "./.goeland_problem.p"]
   let stdout ← solver.stdout.readToEnd
   let stderr ← solver.stderr.readToEnd
   solver.kill
-  let proven := (stdout == "" ∧ stderr == "")
+  let proven := (stderr == "")
   let proof ← IO.FS.readFile "./.goeland_problem_sol.p"
   if proven then
     trace[auto.tptp.result] "Proof: \n{proof}"

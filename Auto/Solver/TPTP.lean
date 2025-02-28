@@ -209,38 +209,58 @@ def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := 
 
 def queryEggSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   let path := auto.tptp.egg.path.get (← getOptions)
-  IO.FS.withFile "./.egg_problem.p" .writeNew (fun stream => stream.putStr (query ++ "\n"))
-  IO.FS.withFile "./.egg_problem_sol.p" .writeNew (fun stream => stream.putStr "")
-  let solver ← createAux path #["--level1", "./.egg_problem.p", "./.egg_problem_sol.p"]
+  -- Hash the query to create unique file names
+  let queryHash := toString <| hash query
+  let problemFile := s!"./.egg_problem_{queryHash}.p"
+  let solutionFile := s!"./.egg_problem_sol_{queryHash}.p"
+
+  IO.FS.withFile problemFile .writeNew (fun stream => stream.putStr (query ++ "\n"))
+  IO.FS.withFile solutionFile .writeNew (fun stream => stream.putStr "")
+
+  let solver ← createAux path #["--level1", problemFile, solutionFile]
   let stdout ← solver.stdout.readToEnd
   let stderr ← solver.stderr.readToEnd
   solver.kill
+
   let proven := (stdout == "" ∧ stderr == "")
-  let proof ← IO.FS.readFile "./.egg_problem_sol.p"
+  let proof ← IO.FS.readFile solutionFile
+
+  IO.FS.removeFile problemFile
+  IO.FS.removeFile solutionFile
+
   if proven then
     trace[auto.tptp.result] "Proof: \n{proof}"
   else
     trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
-  IO.FS.removeFile "./.egg_problem.p"
-  IO.FS.removeFile "./.egg_problem_sol.p"
+
   return (proven, ← Parser.TPTP.parse proof)
 
 def queryGoelandSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
   let path := auto.tptp.goeland.path.get (← getOptions)
-  IO.FS.withFile "./.goeland_problem.p" .writeNew (fun stream => stream.putStr (query ++ "\n"))
-  IO.FS.withFile "./.goeland_problem_sol.p" .writeNew (fun stream => stream.putStr "")
-  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", "-proof_file=.goeland_problem_sol", "./.goeland_problem.p"]
+  -- Hash the query to create unique file names
+  let queryHash := toString <| hash query
+  let problemFile := s!"./.goeland_problem_{queryHash}.p"
+  let solutionFile := s!"./.goeland_problem_sol_{queryHash}.p"
+
+  IO.FS.withFile problemFile .writeNew (fun stream => stream.putStr (query ++ "\n"))
+  IO.FS.withFile solutionFile .writeNew (fun stream => stream.putStr "")
+
+  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", s!"-proof_file=./.goeland_problem_sol_{queryHash}", problemFile]
   let stdout ← solver.stdout.readToEnd
   let stderr ← solver.stderr.readToEnd
   solver.kill
-  let proof ← IO.FS.readFile "./.goeland_problem_sol.p"
+
+  let proof ← IO.FS.readFile solutionFile
   let proven := (stderr == "" ∧ proof != "")
+
+  IO.FS.removeFile problemFile
+  IO.FS.removeFile solutionFile
+
   if proven then
     trace[auto.tptp.result] "Proof: \n{proof}"
   else
-    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
-  IO.FS.removeFile "./.goeland_problem.p"
-  IO.FS.removeFile "./.goeland_problem_sol.p"
+    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}\nproof:\n{proof}"
+
   return (proven, ← Parser.TPTP.parse proof)
 
 end Solver.TPTP

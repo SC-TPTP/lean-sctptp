@@ -1188,13 +1188,13 @@ def InferenceRule.prettyPrint : InferenceRule → MetaM String
   | leftIff i           => pure s!"leftIff {i}"
   | leftNot i           => pure s!"leftNot {i}"
   | leftEx i y          => pure s!"leftEx {i} {y}"
-  | leftForall i t      => pure s!"leftForall {i} `{t}`"
+  | leftForall i t      => do pure s!"leftForall {i} `{← ppExpr t}`"
   | rightAnd i          => pure s!"rightAnd {i}"
   | rightOr i           => pure s!"rightOr {i}"
   | rightImplies i      => pure s!"rightImplies {i}"
   | rightIff i          => pure s!"rightIff {i}"
   | rightNot i          => pure s!"rightNot {i}"
-  | rightEx i t         => pure s!"rightEx {i} `{t}`"
+  | rightEx i t         => do pure s!"rightEx {i} `{← ppExpr t}`"
   | rightForall i y     => pure s!"rightForall {i} {y}"
   | rightRefl i         => pure s!"rightRefl {i}"
   | rightSubstEq i b P  => do pure s!"rightSubstEq {i} {b} `{← ppExpr P}`"
@@ -1203,7 +1203,7 @@ def InferenceRule.prettyPrint : InferenceRule → MetaM String
   | leftSubstIff i b R  => do pure s!"leftSubstIff {i} {b} {← ppExpr R}`"
   | instFun F t         => do pure s!"instFun {F} `{← ppExpr t}`"
   | instPred P phi      => do pure s!"instPred {P} `{← ppExpr phi}`"
-  | rightEpsilon A x t  => do pure s!"rightEpsilon {A} {x} `{← ppExpr t}`"
+  | rightEpsilon A x t  => do pure s!"rightEpsilon `{← ppExpr A}` {x} `{← ppExpr t}`"
   | leftEpsilon i y     => do pure s!"leftEpsilon {i} {y}"
 
 -- Level 2
@@ -1501,7 +1501,7 @@ def ProofStep.prettyPrint : ProofStep → MetaM String
   let rule ← InferenceRule.prettyPrint rule
   let ant ← ant.mapM ppExpr
   let con ← con.mapM ppExpr
-  pure s!"{name} : {rule} {premises} | {ant} | {con}"
+  pure s!"Name = {name}\nRule = {rule}\nPremises = {premises}\nAntecedents = {ant}\nConsequents = {con}"
 
 open Embedding.Lam in
 /--
@@ -1512,15 +1512,13 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
   let lamEVarTy ← LamReif.getLamEVarTy
   let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}, {}⟩
   let mut ret := #[]
+  trace[auto.tptp.printProof] "###########################################"
   for ⟨cmd, args⟩ in cmds.reverse do
     match cmd with
     | "fof" =>
-      trace[auto.tptp.printProof] "###########################################"
-      trace[auto.tptp.printProof] "# {decl_name%}: {cmd} {args}"
+      trace[auto.tptp.printProof] "{decl_name%}: {cmd} {args}"
       match args with
       | ⟨.ident name, []⟩ :: ⟨.ident formulaKind, _⟩ :: sequent :: tail =>
-        trace[auto.tptp.printProof] s!"Variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => s!"{x}")}"
-
         -- ### Reifing the inference record
         let infRec ← match formulaKind with
           | "axiom" => pure ⟨.hyp 0, []⟩
@@ -1565,8 +1563,11 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
 
         -- ### Instantiating the proof step
         let step := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩
-        trace[auto.tptp.printProof] s!"Reconstructed proof step: {← step.prettyPrint}"
         ret := ret.push step
+
+        trace[auto.tptp.printProof] s!"Reconstructed proof step:\n{← step.prettyPrint}"
+        trace[auto.tptp.printProof] s!"New variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => s!"{x}")}"
+
       | _ => continue
     | _ => throwError "{decl_name%} :: Unknown command {cmd}"
   return ret.reverse

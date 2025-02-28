@@ -794,7 +794,7 @@ def getLocalContextStr : TacticM String := withMainContext do
     let ty ← Parser.TPTP.resolveTypes decl.type
     s := s ++ s!"- {decl.userName} : {← ppExpr ty}\n"
   let goalStr ← ppExpr (← (← getMainGoal).getType)
-  s := s ++ s!"|- {goalStr}"
+  s := s ++ s!"⊢ {goalStr}"
   return s
 
 def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
@@ -1104,9 +1104,8 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     let proofstep := proofsteps[proofsteps.size - 1]!
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
-    trace[auto.tptp.printProof] s!"  {← proofstep.prettyPrint}"
-    trace[auto.tptp.printProof] "    Current context:\n{← getLocalContextStr}"
-    trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
+    trace[auto.tptp.printProof] "Current context:\n{← getLocalContextStr}"
+    trace[auto.tptp.printProof] s!"{← proofstep.prettyPrint}"
     try
       applyProofStep proofstep premisesProofstep.toArray
     catch e =>
@@ -1181,20 +1180,17 @@ def evalEgg : Tactic
     let (lemmas, inhFacts) ← collectAllLemmas hints uords #[FVarId.mk `_currentGoalName]
     let proofsteps ← runEgg lemmas inhFacts
 
-    trace[auto.tptp.printProof] "Proof steps (forward):"
-    for step in proofsteps do
-      trace[auto.tptp.printProof] "  {← step.prettyPrint}"
-
     try
       let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
       for (proofstep, i) in proofsteps.zipWithIndex do
         proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+      trace[auto.tptp.printProof] "###########################################"
       trace[auto.tptp.printProof] "Proof steps (backward):"
       reconstructProof proofsteps proofStepNameToIndex
     catch e =>
       throwError "Egg found a proof, but reconstruction failed with:\n{e.toMessageData}"
 
-    -- TODO: clean unassigned meta variables
+    -- TODO: handle unassigned metavariables
 
   | .useSorry =>
     let proof ← mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
@@ -1269,14 +1265,11 @@ def evalGoeland : Tactic
     let (lemmas, inhFacts) ← collectAllLemmas hints uords #[FVarId.mk `_currentGoalName]
     let proofsteps ← runGoeland lemmas inhFacts
 
-    trace[auto.tptp.printProof] "Proof steps (forward):"
-    for step in proofsteps do
-      trace[auto.tptp.printProof] "  {← step.prettyPrint}"
-
     try
       let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
       for (proofstep, i) in proofsteps.zipWithIndex do
         proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+      trace[auto.tptp.printProof] "###########################################"
       trace[auto.tptp.printProof] "Proof steps (backward):"
       reconstructProof proofsteps proofStepNameToIndex
     catch e =>
@@ -1315,11 +1308,19 @@ set_option trace.auto.lamReif.printValuation true
   --   (h : ∀ y : Nat, y = y) :
   --   a = b := by
   --   egg
+
 -- Exporting hypotheses not suppported by the solver
   -- example (α : Type) (a b : α)
   --   (h : ∀ y : α, y = a)
   --   (h : ∃ y : Nat, y = y) :
   --   a = b := by
+  --   egg
+
+-- Useless variable create placeholder synthesis issue
+  -- example (α : Type) (sf : α -> α) (cemptySet : α)
+  --   (h1 : ∀ x, x = sf (sf (sf x)))
+  --   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
+  --   cemptySet = sf cemptySet := by
   --   egg
 
 example : A ↔ A := by
@@ -1411,14 +1412,14 @@ example (α : Type) (f : α -> α) (a : α)
   f a = a := by
   egg
 
-example (α : Type) (f : α -> α) (a : α)
-  (h1 : ∀ x, x = (f (f (f ( f x)))))
-  (h2 : a =  f (f (f (f ( f a))))) :
-  f a = a := by
-  goeland
-
 example (α : Type) (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
   goeland
 
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
+  goeland
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  f a = a := by
   goeland

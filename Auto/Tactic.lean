@@ -1390,7 +1390,7 @@ example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
   goeland
 
-example (α : Type) (f : α -> α) (a : α)
+example (α : Type) [Nonempty α] (f : α -> α) (a : α)
   (h1 : ∀ x, x = (f (f (f ( f x)))))
   (h2 : a =  f (f (f (f ( f a))))) :
   f a = a := by

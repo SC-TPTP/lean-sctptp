@@ -1109,174 +1109,68 @@ inductive InferenceRule where
   | instMult                 (args : List (String × Expr))
 deriving Inhabited, Repr
 
-open InferenceRule in
-def InferenceRule.toString : InferenceRule → String
--- Level 1
-  | rightTrue i         => s!"rightTrue {i}"
-  | leftFalse i         => s!"leftFalse {i}"
-  | hyp i               => s!"hyp {i}"
-  | leftWeaken i        => s!"leftWeaken {i}"
-  | rightWeaken i       => s!"rightWeaken {i}"
-  | cut i               => s!"cut {i}"
-  | leftAnd i           => s!"leftAnd {i}"
-  | leftOr i            => s!"leftOr {i}"
-  | leftImplies i       => s!"leftImplies {i}"
-  | leftIff i           => s!"leftIff {i}"
-  | leftNot i           => s!"leftNot {i}"
-  | leftEx i y          => s!"leftEx {i} {y}"
-  | leftForall i t      => s!"leftForall {i} `{t}`"
-  | rightAnd i          => s!"rightAnd {i}"
-  | rightOr i           => s!"rightOr {i}"
-  | rightImplies i      => s!"rightImplies {i}"
-  | rightIff i          => s!"rightIff {i}"
-  | rightNot i          => s!"rightNot {i}"
-  | rightEx i t         => s!"rightEx {i} `{t}`"
-  | rightForall i y     => s!"rightForall {i} {y}"
-  | rightRefl i         => s!"rightRefl {i}"
-  | rightSubstEq i b P  => s!"rightSubstEq {i} {b} `{P}`"
-  | leftSubstEq i b P   => s!"leftSubstEq {i} {b} `{P}`"
-  | rightSubstIff i b R => s!"rightSubstIff {i} {b}` `{R}`"
-  | leftSubstIff i b R  => s!"leftSubstIff {i} {b} {R}`"
-  | instFun F t         => s!"instFun {F} `{t}`"
-  | instPred P phi      => s!"instPred {P} `{phi}`"
-  | rightEpsilon A x t  => s!"rightEpsilon {A} {x} `{t}`"
-  | leftEpsilon i y     => s!"leftEpsilon {i} {y}"
+def InferenceRule.toMessageData : InferenceRule → MessageData
+  -- Level 1
+  | .rightTrue i         => m!"rightTrue [{i}]"
+  | .leftFalse i         => m!"leftFalse [{i}]"
+  | .hyp i               => m!"hyp [{i}]"
+  | .leftWeaken i        => m!"leftWeaken [{i}]"
+  | .rightWeaken i       => m!"rightWeaken [{i}]"
+  | .cut i               => m!"cut [{i}]"
+  | .leftAnd i           => m!"leftAnd [{i}]"
+  | .leftOr i            => m!"leftOr [{i}]"
+  | .leftImplies i       => m!"leftImplies [{i}]"
+  | .leftIff i           => m!"leftIff [{i}]"
+  | .leftNot i           => m!"leftNot [{i}]"
+  | .leftEx i y          => m!"leftEx [{i}, {y}]"
+  | .leftForall i t      => m!"leftForall [{i}, `{t}`]"
+  | .rightAnd i          => m!"rightAnd [{i}]"
+  | .rightOr i           => m!"rightOr [{i}]"
+  | .rightImplies i      => m!"rightImplies [{i}]"
+  | .rightIff i          => m!"rightIff [{i}]"
+  | .rightNot i          => m!"rightNot [{i}]"
+  | .rightEx i t         => m!"rightEx [{i}, `{t}`]"
+  | .rightForall i y     => m!"rightForall [{i}, {y}]"
+  | .rightRefl i         => m!"rightRefl [{i}]"
+  | .rightSubstEq i b P  => m!"rightSubstEq [{i}, {b}, `{P}`]"
+  | .leftSubstEq i b P   => m!"leftSubstEq [{i}, {b}, `{P}`]"
+  | .rightSubstIff i b R => m!"rightSubstIff [{i}, {b}, `{R}`]"
+  | .leftSubstIff i b R  => m!"leftSubstIff [{i}, {b}, `{R}`]"
+  | .instFun F t         => m!"instFun [{F}, `{t}`]"
+  | .instPred P phi      => m!"instPred [{P}, `{phi}`]"
+  | .rightEpsilon A x t  => m!"rightEpsilon [{A}, {x}, `{t}`]"
+  | .leftEpsilon i y     => m!"leftEpsilon [{i}, {y}]"
 
--- Level 2
-  | congruence          => "congruence"
-  | leftHyp i           => s!"leftHyp {i}"
-  | leftNotAnd i        => s!"leftNotAnd {i}"
-  | leftNotOr i         => s!"leftNotOr {i}"
-  | leftNotImplies i    => s!"leftNotImplies {i}"
-  | leftNotIff i        => s!"leftNotIff {i}"
-  | leftNotNot i        => s!"leftNotNot {i}"
-  | leftNotEx i t       => s!"leftNotEx {i} `{t}`"
-  | leftNotAll i y      => s!"leftNotAll {i} {y}"
+  -- Level 2
+  | .congruence          => "congruence"
+  | .leftHyp i           => m!"leftHyp [{i}]"
+  | .leftNotAnd i        => m!"leftNotAnd [{i}]"
+  | .leftNotOr i         => m!"leftNotOr [{i}]"
+  | .leftNotImplies i    => m!"leftNotImplies [{i}]"
+  | .leftNotIff i        => m!"leftNotIff [{i}]"
+  | .leftNotNot i        => m!"leftNotNot [{i}]"
+  | .leftNotEx i t       => m!"leftNotEx [{i}, `{t}`]"
+  | .leftNotAll i y      => m!"leftNotAll [{i}, {y}]"
 
--- Level 3
-  | rightRelIff i                  => s!"rightRelIff {i}"
-  | rightSubstMulti i P vars       => s!"rightSubstMulti {i} `{P}` {vars}"
-  | leftSubstMulti i P vars        => s!"leftSubstMulti {i} `{P}` {vars}"
-  | rightSubstEqForallLocal i R Z  => s!"rightSubstEqualForallLocal {i} `{R}` {Z}"
-  | rightSubstEqForall i R Z       => s!"rightSubstEqForall {i} `{R}` {Z}"
-  | rightSubstIffForallLocal i R Z => s!"rightSubstIffForallLocal {i} `{R}` {Z}"
-  | rightSubstIffForall i R Z      => s!"rightSubstIffForall {i} `{R}` {Z}"
-  | rightNnf i j                   => s!"rightNnf {i} {j}"
-  | rightPrenex i j                => s!"rightPrenex {i} {j}"
-  | clausify i                     => s!"clausify {i}"
-  | elimIffRefl i                  => s!"elimIffRefl {i}"
-  | res i                          => s!"res {i}"
-  | instMult args =>
-    let argsStr := String.intercalate ", " (args.map fun (x, y) => s!"{x}: {y}")
-    s!"instMult [{argsStr}]"
-
-instance : ToString InferenceRule where
-  toString := InferenceRule.toString
-
-open InferenceRule in
-def InferenceRule.prettyPrint : InferenceRule → MetaM String
--- Level 1
-  | rightTrue i         => pure s!"rightTrue {i}"
-  | leftFalse i         => pure s!"leftFalse {i}"
-  | hyp i               => pure s!"hyp {i}"
-  | leftWeaken i        => pure s!"leftWeaken {i}"
-  | rightWeaken i       => pure s!"rightWeaken {i}"
-  | cut i               => pure s!"cut {i}"
-  | leftAnd i           => pure s!"leftAnd {i}"
-  | leftOr i            => pure s!"leftOr {i}"
-  | leftImplies i       => pure s!"leftImplies {i}"
-  | leftIff i           => pure s!"leftIff {i}"
-  | leftNot i           => pure s!"leftNot {i}"
-  | leftEx i y          => pure s!"leftEx {i} {y}"
-  | leftForall i t      => do pure s!"leftForall {i} `{← ppExpr t}`"
-  | rightAnd i          => pure s!"rightAnd {i}"
-  | rightOr i           => pure s!"rightOr {i}"
-  | rightImplies i      => pure s!"rightImplies {i}"
-  | rightIff i          => pure s!"rightIff {i}"
-  | rightNot i          => pure s!"rightNot {i}"
-  | rightEx i t         => do pure s!"rightEx {i} `{← ppExpr t}`"
-  | rightForall i y     => pure s!"rightForall {i} {y}"
-  | rightRefl i         => pure s!"rightRefl {i}"
-  | rightSubstEq i b P  => do pure s!"rightSubstEq {i} {b} `{← ppExpr P}`"
-  | leftSubstEq i b P   => do pure s!"leftSubstEq {i} {b} `{← ppExpr P}`"
-  | rightSubstIff i b R => do pure s!"rightSubstIff {i} {b}` `{← ppExpr R}`"
-  | leftSubstIff i b R  => do pure s!"leftSubstIff {i} {b} {← ppExpr R}`"
-  | instFun F t         => do pure s!"instFun {F} `{← ppExpr t}`"
-  | instPred P phi      => do pure s!"instPred {P} `{← ppExpr phi}`"
-  | rightEpsilon A x t  => do pure s!"rightEpsilon `{← ppExpr A}` {x} `{← ppExpr t}`"
-  | leftEpsilon i y     => do pure s!"leftEpsilon {i} {y}"
-
--- Level 2
-  | congruence          => pure "congruence"
-  | leftHyp i           => pure s!"leftHyp {i}"
-  | leftNotAnd i        => pure s!"leftNotAnd {i}"
-  | leftNotOr i         => pure s!"leftNotOr {i}"
-  | leftNotImplies i    => pure s!"leftNotImplies {i}"
-  | leftNotIff i        => pure s!"leftNotIff {i}"
-  | leftNotNot i        => pure s!"leftNotNot {i}"
-  | leftNotEx i t       => do pure s!"leftNotEx {i} `{← ppExpr t}`"
-  | leftNotAll i y      => pure s!"leftNotAll {i} {y}"
-
--- Level 3
-  | rightRelIff i                  => pure s!"rightRelIff {i}"
-  | rightSubstMulti i P vars       => do pure s!"rightSubstMulti {i} `{← ppExpr P}` {vars}"
-  | leftSubstMulti i P vars        => do pure s!"leftSubstMulti {i} `{← ppExpr P}` {vars}"
-  | rightSubstEqForallLocal i R Z  => do pure s!"rightSubstEqualForallLocal {i} `{← ppExpr R}` {← ppExpr Z}"
-  | rightSubstEqForall i R Z       => do pure s!"rightSubstEqForall {i} `{← ppExpr R}` {← ppExpr Z}"
-  | rightSubstIffForallLocal i R Z => do pure s!"rightSubstIffForallLocal {i} `{← ppExpr R}` {← ppExpr Z}"
-  | rightSubstIffForall i R Z      => do pure s!"rightSubstIffForall {i} `{← ppExpr R}` {← ppExpr Z}"
-  | rightNnf i j                   => pure s!"rightNnf {i} {j}"
-  | rightPrenex i j                => pure s!"rightPrenex {i} {j}"
-  | clausify i                     => pure s!"clausify {i}"
-  | elimIffRefl i                  => pure s!"elimIffRefl {i}"
-  | res i                          => pure s!"res {i}"
-  | instMult args => do
-    let argsStr := String.intercalate ", " (← (args.mapM fun (x, y) => do pure s!"{x}: {← ppExpr y}"))
-    pure s!"instMult [{argsStr}]"
-
-instance : Lean.ToMessageData InferenceRule where
-  toMessageData rule := match rule with
-    -- Rules that take only number parameters
-    | .rightTrue i | .leftFalse i | .hyp i | .leftWeaken i | .rightWeaken i | .cut i
-    | .leftAnd i | .leftOr i | .leftImplies i | .leftIff i | .leftNot i
-    | .rightAnd i | .rightOr i | .rightImplies i | .rightIff i | .rightNot i
-    | .rightRefl i | .leftHyp i | .leftNotAnd i | .leftNotOr i | .leftNotImplies i
-    | .leftNotIff i | .leftNotNot i | .rightRelIff i | .clausify i | .elimIffRefl i
-    | .res i => m!"{rule.toString} [{i}]"
-
-    -- Rules with pairs of indices
-    | .rightNnf i j | .rightPrenex i j => m!"{rule.toString} [{i}, {j}]"
-
-    -- Rules with index and string
-    | .leftEx i y | .rightForall i y | .leftEpsilon i y | .leftNotAll i y => m!"{rule.toString} [{i}, {y}]"
-
-    -- Rules with index and expression
-    | .leftForall i t | .rightEx i t | .leftNotEx i t => m!"{rule.toString} [{i}, {t}]"
-
-    -- Rules with more complex parameters
-    | .rightSubstEq i b P | .leftSubstEq i b P
-    | .rightSubstIff i b P | .leftSubstIff i b P => m!"{rule.toString} [{i}, {b}, {P}]"
-
-    -- Rules with string and expression
-    | .instFun F t | .instPred F t => m!"{rule.toString} [{F}, {t}]"
-
-    -- Rules with two expressions and a string
-    | .rightEpsilon A x t => m!"{rule.toString} [{A}, {x}, {t}]"
-
-    -- No-parameter rules
-    | .congruence => m!"congruence"
-
-    -- Rules with list parameters
-    | .rightSubstMulti i P vars | .leftSubstMulti i P vars => m!"{rule.toString} [{i}, {P}, {vars}]"
-
-    -- Rules with expressions only
-    | .rightSubstEqForallLocal i R Z | .rightSubstEqForall i R Z
-    | .rightSubstIffForallLocal i R Z | .rightSubstIffForall i R Z => m!"{rule.toString} [{i}, {R}, {Z}]"
-
-    -- Special case for instMult with list of pairs
-    | .instMult args =>
+  -- Level 3
+  | .rightRelIff i                  => m!"rightRelIff [{i}]"
+  | .rightSubstMulti i P vars       => m!"rightSubstMulti [{i}, `{P}`, {vars}]"
+  | .leftSubstMulti i P vars        => m!"leftSubstMulti [{i}, `{P}`, {vars}]"
+  | .rightSubstEqForallLocal i R Z  => m!"rightSubstEqualForallLocal [{i}, `{R}`, {Z}]"
+  | .rightSubstEqForall i R Z       => m!"rightSubstEqForall [{i}, `{R}`, {Z}]"
+  | .rightSubstIffForallLocal i R Z => m!"rightSubstIffForallLocal [{i}, `{R}`, {Z}]"
+  | .rightSubstIffForall i R Z      => m!"rightSubstIffForall [{i}, `{R}`, {Z}]"
+  | .rightNnf i j                   => m!"rightNnf [{i} {j}]"
+  | .rightPrenex i j                => m!"rightPrenex [{i} {j}]"
+  | .clausify i                     => m!"clausify [{i}]"
+  | .elimIffRefl i                  => m!"elimIffRefl [{i}]"
+  | .res i                          => m!"res [{i}]"
+  | .instMult args =>
       let argsStr := Lean.MessageData.joinSep (args.map (fun (x, y) => m!"{x}: {y}")) ", "
       m!"instMult [{argsStr}]"
+
+instance : Lean.ToMessageData InferenceRule where
+  toMessageData rule := InferenceRule.toMessageData rule
 
 def parseBool (pt : Term) : Bool :=
   match pt with
@@ -1331,11 +1225,14 @@ structure InferenceRecord where
   premises  : List String
 deriving Inhabited, Repr
 
-def InferenceRecord.toString : InferenceRecord → String
-| ⟨rule, premises⟩ => s!"Rule: {rule}; Premises: {premises}"
+def InferenceRecord.toMessageData : InferenceRecord → MessageData
+  | ⟨rule, premises⟩ =>
+    let rule := InferenceRule.toMessageData rule
+    let premises := MessageData.joinSep (premises.map (fun s => m!"{s}")) ", "
+    m!"InferenceRecord [{rule}, {premises}]"
 
-instance : ToString InferenceRecord where
-  toString := InferenceRecord.toString
+instance : ToMessageData InferenceRecord where
+  toMessageData record := InferenceRecord.toMessageData record
 
 -- method traversing a parsed term, and adding new variables to the parsing info for each unknown variable
 partial def updateVars (pi : ParsingInfo) (t : Term) : LamReif.ReifM ParsingInfo := do
@@ -1357,7 +1254,7 @@ def term2Expr (pi : ParsingInfo) (t : Term) : LamReif.ReifM (Expr × ParsingInfo
     let e ← lamTerm2Expr t pi
     pure (e, pi)
   | .error e => throwError e
-  | lc => throwError s!"Unexpected LamConstr {lc}, expected term"
+  | lc => throwError "Unexpected LamConstr {lc}, expected term"
 
 def extractTerm (pi : ParsingInfo) (pt : Term) (vars : List String := []): LamReif.ReifM (Expr × ParsingInfo) :=
   match pt with
@@ -1365,7 +1262,7 @@ def extractTerm (pi : ParsingInfo) (pt : Term) (vars : List String := []): LamRe
   | Term.mk (Token.ident "$fof") [inner] =>
     let inner := if vars.isEmpty then inner else ⟨.op "^", inner :: vars.map (fun v => ⟨.ident v, []⟩)⟩
     term2Expr pi inner
-  | _ => throwError s!"{decl_name%}: expected a $fot / $fof term but got {pt}"
+  | _ => throwError "{decl_name%}: expected a $fot / $fof term but got {pt}"
 
 open Embedding.Lam InferenceRule in
 def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (InferenceRecord × ParsingInfo) := do
@@ -1532,20 +1429,6 @@ structure ProofStep where
   consequents        : List Expr
 deriving Inhabited, Repr
 
-def ProofStep.toString : ProofStep → String
-| ⟨name, rule, premises, ant, con⟩ =>
-  s!"{name} : {rule} {premises} | {ant} | {con}"
-
-instance : ToString ProofStep where
-  toString := ProofStep.toString
-
-def ProofStep.prettyPrint : ProofStep → MetaM String
-| ⟨name, rule, premises, ant, con⟩ => do
-  let rule ← InferenceRule.prettyPrint rule
-  let ant ← ant.mapM ppExpr
-  let con ← con.mapM ppExpr
-  pure s!"Name = {name}\nRule = {rule}\nPremises = {premises}\nAntecedents = {ant}\nConsequents = {con}"
-
 instance : Lean.ToMessageData ProofStep where
   toMessageData ps :=
     let nameField := m!"Name: " ++ ps.name
@@ -1590,7 +1473,7 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
               let (infRec, piloc) ← parseInferenceRecord inferTerm pi
               pi := piloc
               pure infRec
-            | _ => throwError s!"Unexpected formula kind: {formulaKind}"
+            | _ => throwError "Unexpected formula kind: {formulaKind}"
           | _ => continue
 
         -- ### Reifing the sequent
@@ -1628,8 +1511,8 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
         let step: ProofStep := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩
         ret := ret.push step
 
-        trace[auto.tptp.printProof] "Reconstructed proof step:\n{step}"
-        trace[auto.tptp.printProof] "New variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => s!"{x}")}"
+        trace[auto.tptp.printProof] m!"Reconstructed proof step:\n{step}"
+        trace[auto.tptp.printProof] m!"New variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => m!"{x}")}"
 
       | _ => continue
     | _ => throwError "{decl_name%} :: Unknown command {cmd}"

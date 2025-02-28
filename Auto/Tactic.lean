@@ -853,9 +853,11 @@ def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
       -- We then need to introduce the binding into the context.
       let (_fvar, newMainGoal) ← newMainGoal.intro1P
       replaceMainGoal [mvarId, newMainGoal]
-      evalTactic (← `(tactic| apply Classical.choice inferInstance))
-      -- mvarId.assign default
-      trace[auto.tptp.printProof] "Assigned metavariable {mvarId} of type {← ppExpr type} with `default`"
+      try
+        evalTactic (← `(tactic| apply Classical.choice inferInstance))
+        trace[auto.tptp.printProof] "Assigned metavariable {mvarId} using `Classical.choice`"
+      catch e =>
+        throwError "{decl_name%} :: Failed to assign metavariable {mvarId} using `Classical.choice`, probably because of a missing `Nonempty` instance.\nError: {e.toMessageData}"
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -1348,6 +1350,7 @@ example (α : Type) (f : α -> α) (a : α)
   a = f a := by
   egg
 
+-- issue here: `y` is not used, so related variables instantiated by the ATP have unknown type
 theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
   -- (h : ∃ y : Nat, y = y)
   (h1 : ∀ x, x = sf (sf (sf x)))
@@ -1380,6 +1383,7 @@ example (α : Type) (f : α -> α) (a : α)
   f a = a := by
   egg
 
+-- issue here: we have two different variables `Sko_0` ^^'
 example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
   goeland
 

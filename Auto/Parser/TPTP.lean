@@ -1037,12 +1037,17 @@ where
     | _, _ => .error s!"term2LamTermSCTPTP :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
 
 
+def resolveTypes (e : Expr) : MetaM Expr := do
+  let e ← instantiateMVars (← Core.betaReduce e)
+  Meta.check e
+  return e
+
 open Lam2D LamReif in
 def lamTerm2Expr (t : Embedding.Lam.LamTerm) (pi : ParsingInfo) : ReifM Expr := do
   let tyValMap := Std.HashMap.ofList ((← getTyVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
   let varValMap := Std.HashMap.ofList ((← getVarVal).zipWithIndex.map (fun ((e, _), n) => (n, e))).toList
   let etomValMap := Std.HashMap.ofList (pi.skolemExpr.zipWithIndex.map (fun (e, n) => (n, e))).toList
-  instantiateMVars (← interpLamTermAsUnliftedWithInference tyValMap varValMap etomValMap 0 t)
+  resolveTypes (← interpLamTermAsUnliftedWithInference tyValMap varValMap etomValMap 0 t)
 
 
 inductive InferenceRule where
@@ -1167,6 +1172,67 @@ def InferenceRule.toString : InferenceRule → String
 
 instance : ToString InferenceRule where
   toString := InferenceRule.toString
+
+open InferenceRule in
+def InferenceRule.prettyPrint : InferenceRule → MetaM String
+-- Level 1
+  | rightTrue i         => pure s!"rightTrue {i}"
+  | leftFalse i         => pure s!"leftFalse {i}"
+  | hyp i               => pure s!"hyp {i}"
+  | leftWeaken i        => pure s!"leftWeaken {i}"
+  | rightWeaken i       => pure s!"rightWeaken {i}"
+  | cut i               => pure s!"cut {i}"
+  | leftAnd i           => pure s!"leftAnd {i}"
+  | leftOr i            => pure s!"leftOr {i}"
+  | leftImplies i       => pure s!"leftImplies {i}"
+  | leftIff i           => pure s!"leftIff {i}"
+  | leftNot i           => pure s!"leftNot {i}"
+  | leftEx i y          => pure s!"leftEx {i} {y}"
+  | leftForall i t      => pure s!"leftForall {i} `{t}`"
+  | rightAnd i          => pure s!"rightAnd {i}"
+  | rightOr i           => pure s!"rightOr {i}"
+  | rightImplies i      => pure s!"rightImplies {i}"
+  | rightIff i          => pure s!"rightIff {i}"
+  | rightNot i          => pure s!"rightNot {i}"
+  | rightEx i t         => pure s!"rightEx {i} `{t}`"
+  | rightForall i y     => pure s!"rightForall {i} {y}"
+  | rightRefl i         => pure s!"rightRefl {i}"
+  | rightSubstEq i b P  => do pure s!"rightSubstEq {i} {b} `{← ppExpr P}`"
+  | leftSubstEq i b P   => do pure s!"leftSubstEq {i} {b} `{← ppExpr P}`"
+  | rightSubstIff i b R => do pure s!"rightSubstIff {i} {b}` `{← ppExpr R}`"
+  | leftSubstIff i b R  => do pure s!"leftSubstIff {i} {b} {← ppExpr R}`"
+  | instFun F t         => do pure s!"instFun {F} `{← ppExpr t}`"
+  | instPred P phi      => do pure s!"instPred {P} `{← ppExpr phi}`"
+  | rightEpsilon A x t  => do pure s!"rightEpsilon {A} {x} `{← ppExpr t}`"
+  | leftEpsilon i y     => do pure s!"leftEpsilon {i} {y}"
+
+-- Level 2
+  | congruence          => pure "congruence"
+  | leftHyp i           => pure s!"leftHyp {i}"
+  | leftNotAnd i        => pure s!"leftNotAnd {i}"
+  | leftNotOr i         => pure s!"leftNotOr {i}"
+  | leftNotImplies i    => pure s!"leftNotImplies {i}"
+  | leftNotIff i        => pure s!"leftNotIff {i}"
+  | leftNotNot i        => pure s!"leftNotNot {i}"
+  | leftNotEx i t       => do pure s!"leftNotEx {i} `{← ppExpr t}`"
+  | leftNotAll i y      => pure s!"leftNotAll {i} {y}"
+
+-- Level 3
+  | rightRelIff i                  => pure s!"rightRelIff {i}"
+  | rightSubstMulti i P vars       => do pure s!"rightSubstMulti {i} `{← ppExpr P}` {vars}"
+  | leftSubstMulti i P vars        => do pure s!"leftSubstMulti {i} `{← ppExpr P}` {vars}"
+  | rightSubstEqForallLocal i R Z  => do pure s!"rightSubstEqualForallLocal {i} `{← ppExpr R}` {← ppExpr Z}"
+  | rightSubstEqForall i R Z       => do pure s!"rightSubstEqForall {i} `{← ppExpr R}` {← ppExpr Z}"
+  | rightSubstIffForallLocal i R Z => do pure s!"rightSubstIffForallLocal {i} `{← ppExpr R}` {← ppExpr Z}"
+  | rightSubstIffForall i R Z      => do pure s!"rightSubstIffForall {i} `{← ppExpr R}` {← ppExpr Z}"
+  | rightNnf i j                   => pure s!"rightNnf {i} {j}"
+  | rightPrenex i j                => pure s!"rightPrenex {i} {j}"
+  | clausify i                     => pure s!"clausify {i}"
+  | elimIffRefl i                  => pure s!"elimIffRefl {i}"
+  | res i                          => pure s!"res {i}"
+  | instMult args => do
+    let argsStr := String.intercalate ", " (← (args.mapM fun (x, y) => do pure s!"{x}: {← ppExpr y}"))
+    pure s!"instMult [{argsStr}]"
 
 
 def parseBool (pt : Term) : Bool :=
@@ -1430,6 +1496,13 @@ def ProofStep.toString : ProofStep → String
 instance : ToString ProofStep where
   toString := ProofStep.toString
 
+def ProofStep.prettyPrint : ProofStep → MetaM String
+| ⟨name, rule, premises, ant, con⟩ => do
+  let rule ← InferenceRule.prettyPrint rule
+  let ant ← ant.mapM ppExpr
+  let con ← con.mapM ppExpr
+  pure s!"{name} : {rule} {premises} | {ant} | {con}"
+
 open Embedding.Lam in
 /--
   Turn SC-TPTP proof into reified ProofSteps
@@ -1446,7 +1519,7 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
       trace[auto.tptp.printProof] "# {decl_name%}: {cmd} {args}"
       match args with
       | ⟨.ident name, []⟩ :: ⟨.ident formulaKind, _⟩ :: sequent :: tail =>
-        trace[auto.tptp.printProof] s!"ParsingInfo: {pi.proverSkolem.toList.map (fun (x, y) => s!"   \n{x}: {y}")}"
+        trace[auto.tptp.printProof] s!"Variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => s!"{x}")}"
 
         -- ### Reifing the inference record
         let infRec ← match formulaKind with
@@ -1492,7 +1565,7 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
 
         -- ### Instantiating the proof step
         let step := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩
-        trace[auto.tptp.printProof] s!"Reconstructed proof step: {step}"
+        trace[auto.tptp.printProof] s!"Reconstructed proof step: {← step.prettyPrint}"
         ret := ret.push step
       | _ => continue
     | _ => throwError "{decl_name%} :: Unknown command {cmd}"

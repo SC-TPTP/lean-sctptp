@@ -781,30 +781,24 @@ def evalApply (e : Expr) : TacticM Unit := withMainContext do
     | throwError "{decl_name%} :: Too many arguments"
   return [newG]
 
-
-def resolveTypes (e : Expr) : TacticM Expr := withMainContext do
-  let e ← instantiateMVars (← Core.betaReduce e)
-  Meta.check e
-  return e
-
 def getHypExpr (n : Name) : TacticM Expr := withMainContext do
   let lctx ← getLCtx
   let .some localDecl := lctx.findFromUserName? n
     | throwError m!"{decl_name%} : Could not find {n} in context {lctx.getFVars}"
-  return ← resolveTypes localDecl.type
+  return ← Parser.TPTP.resolveTypes localDecl.type
 
 def getLocalContextStr : TacticM String := withMainContext do
   let lctx ← getLCtx
   let mut s := ""
   for decl in lctx do
-    let ty ← resolveTypes decl.type
-    s := s ++ s!"- {decl.userName} : {ty}\n"
-  let goalStr ← (← getMainGoal).getType
+    let ty ← Parser.TPTP.resolveTypes decl.type
+    s := s ++ s!"- {decl.userName} : {← ppExpr ty}\n"
+  let goalStr ← ppExpr (← (← getMainGoal).getType)
   s := s ++ s!"|- {goalStr}"
   return s
 
 def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
-  let mut e ← resolveTypes e
+  let mut e ← Parser.TPTP.resolveTypes e
   if addNot then
     e := mkApp (mkConst ``Not) e
   let lctx ← getLCtx
@@ -1110,7 +1104,7 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     let proofstep := proofsteps[proofsteps.size - 1]!
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
-    trace[auto.tptp.printProof] s!"  {proofstep}"
+    trace[auto.tptp.printProof] s!"  {← proofstep.prettyPrint}"
     trace[auto.tptp.printProof] "    Current context:\n{← getLocalContextStr}"
     trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
     try
@@ -1189,7 +1183,7 @@ def evalEgg : Tactic
 
     trace[auto.tptp.printProof] "Proof steps (forward):"
     for step in proofsteps do
-      trace[auto.tptp.printProof] "  {step}"
+      trace[auto.tptp.printProof] "  {← step.prettyPrint}"
 
     try
       let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
@@ -1277,7 +1271,7 @@ def evalGoeland : Tactic
 
     trace[auto.tptp.printProof] "Proof steps (forward):"
     for step in proofsteps do
-      trace[auto.tptp.printProof] "  {step}"
+      trace[auto.tptp.printProof] "  {← step.prettyPrint}"
 
     try
       let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
@@ -1416,50 +1410,15 @@ example (α : Type) (f : α -> α) (a : α)
   (h2 : a =  f (f (f (f ( f a))))) :
   f a = a := by
   egg
-  -- goeland
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  f a = a := by
+  goeland
+
+example (α : Type) (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
+  goeland
 
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
   goeland
-
-
-example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (X c : α) (h1 : q (g (X, (f X)))) :
-  q (g ((f c), (f (f c)))) := by
-  apply Classical.byContradiction; intro h
-  -- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
-  generalize (f c) = X at h
-  sorry
-
--- fof(a1, axiom, [A] --> []).
--- fof(f1, plain, [p(b, c) ] --> [], inference(instPred, [status(thm), 'A', $fof(p(b, c)), []], [a1])).
-example (α : Type) (p : α × α → Prop) (A : Prop) (b c : α) (h1 : A) : p (b, c) := by
-  apply Classical.byContradiction; intro h
-  -- fof(f1, plain, [p(b, c) ] --> [], inference(instPred, [status(thm), 'A', $fof(p(b, c)), []], [a1])).
-  -- change (fun => (p (b, c))) at h1
-  generalize (p (b, c)) = A at *
-  sorry
-
--- fof(a2, axiom, [q(g(X, f(X)))] --> []).
--- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
-example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (f (c), f (f (c))))) : False := by
-  apply Classical.byContradiction; intro h
-  -- fof(f2, plain, [q(g(f(c), f(f(c))))] --> [], inference(instFun, [status(thm), 'X', $fot(f(c)), []], [a2])).
-  have j (X : α) : q (g (X, f X)) := by
-    sorry
-
-  generalize (f c) = X at *
-  have h : ∀ x₁: α, q x₁ ↔ q x₁ := by intros; apply Iff.refl
-  sorry
-
--- fof(a6, axiom, [q(F(c))] --> []).
--- fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6])).
-example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c : α) (h1 : q (g (c, c))) (h2 : g (c, c) = c): False := by
-  apply Classical.byContradiction; intro h
-  -- fof(f6, plain, [q(g(c, c))] --> [], inference(instFun, [status(thm), 'F', $fot(g(X, X)), ['X']], [a6])).
-  change (q ((fun X => g (X, X)) c)) at h1
-  change (((fun X => g (X, X)) c) = c) at h2
-  generalize (fun X => g ( X, X)) = F at *
-  sorry
-
-example (p : Nat → Nat) (g : Nat × Nat → Nat) (c : Nat) (y : Nat) : p (g (c, c)) = y := by
-  rw [show ∀ x, g (x, x) = (fun y => g (y, y)) x by intros; rfl] at *
-  sorry

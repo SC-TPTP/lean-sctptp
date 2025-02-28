@@ -806,8 +806,7 @@ def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMa
     let ty := decl.type
     if ← isDefEq ty e then
       return decl
-
-  throwError s!"Cannot find hypothesis for `{e}` (type: {← inferType e}) in context:\n{← getLocalContextStr}"
+  throwError s!"Cannot find hypothesis for `{← ppExpr e}` (type: {← ppExpr (← inferType e)}) in context:\n{← getLocalContextStr}"
 
 def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainContext do
   getHypDecl e addNot >>= fun decl => return decl.userName
@@ -1113,8 +1112,9 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     for premise in premises do
       reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
 
-open Embedding.Lam in
-def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+def querySCTPTPSolver
+  (solverName : String) (querySolverFn : String → MetaM (Bool × Array Parser.TPTP.Command))
+  (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
   let lamVarTy := (← LamReif.getVarVal).map Prod.snd
   let lamEVarTy ← LamReif.getLamEVarTy
   let exportLamTerms ← exportFacts.mapM (fun re => do
@@ -1126,46 +1126,53 @@ def queryTPTPEgg (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP
   else
     lam2TH0 lamVarTy lamEVarTy exportLamTerms
   trace[auto.tptp.printQuery] "\n{query}"
-  let (proven, tptpProof) ← Solver.TPTP.queryEggSolver query
+  let (proven, tptpProof) ← querySolverFn query
   if proven then
     try
       let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
       return proofSteps
     catch e =>
-      throwError "Egg found a proof, but proof reification failed with {e.toMessageData}"
+      throwError "{solverName} found a proof, but proof reification failed with {e.toMessageData}"
   else
-    throwError "Egg failed to find proof"
+    throwError "{solverName} failed to find proof"
 
 /--
-  Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver
+  Run `auto`'s monomorphization and preprocessing, then send the problem to the SC-TPTP solver
 -/
-def runEgg
+def runSCTPTPSolver
+  (solverName : String)
+  (querySolver : Array Embedding.Lam.REntry → LamReif.ReifM (Array Parser.TPTP.ProofStep))
   (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
   withDefault do
-    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
+    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {solverName}:" lemmas
     let lemmas ← rewriteIteCondDecide lemmas
     let (proofsteps, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.ProofStep)) do
       let s ← get
       let u ← computeMaxLevel s.facts
-      (reifMAction s.facts s.inhTys s.inds).run' {u := u})
+      (reifMAction s.facts s.inhTys s.inds querySolver).run' {u := u})
     return proofsteps
 where
   reifMAction
     (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
-    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+    (minds : Array (Array SimpleIndVal))
+    (querySolver : Array Embedding.Lam.REntry → LamReif.ReifM (Array Parser.TPTP.ProofStep))
+    : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
     let exportFacts ← LamReif.reifFacts uvalids
-    let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
+    let exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
     let _ ← LamReif.reifInhabitations uinhs
     LamReif.printValuation
     -- **TPTP invocation and Premise Selection**
     if auto.tptp.get (← getOptions) then
-      let proofsteps ← queryTPTPEgg exportFacts
+      let proofsteps ← querySolver exportFacts
       return proofsteps
     throwError "auto.tptp is not enabled"
 
-@[tactic egg]
-def evalEgg : Tactic
-| `(egg | egg $instr $hints $[$uords]*) => withMainContext do
+
+def evalSCTPTPSolverTactic
+  (solverName : String)
+  (runSolver : Array Lemma → Array Lemma → MetaM (Array Parser.TPTP.ProofStep))
+  (instr : Instruction) (hints : TSyntax ``hints) (uords : Array (TSyntax `Auto.uord)) : TacticM Unit :=
+withMainContext do
   let goal ← getMainGoal
   let currentGoalName := `_currentGoalName
   liftMetaTactic fun g => do
@@ -1174,11 +1181,10 @@ def evalEgg : Tactic
     let newG ← newG.introN 1 [currentGoalName]
     return [newG.2]
 
-  let instr ← parseInstr instr
   match instr with
   | .none => withMainContext do
     let (lemmas, inhFacts) ← collectAllLemmas hints uords #[FVarId.mk `_currentGoalName]
-    let proofsteps ← runEgg lemmas inhFacts
+    let proofsteps ← runSolver lemmas inhFacts
 
     try
       let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
@@ -1188,97 +1194,45 @@ def evalEgg : Tactic
       trace[auto.tptp.printProof] "Proof steps (backward):"
       reconstructProof proofsteps proofStepNameToIndex
     catch e =>
-      throwError "Egg found a proof, but reconstruction failed with:\n{e.toMessageData}"
+      throwError "{solverName} found a proof, but reconstruction failed with:\n{e.toMessageData}"
 
     -- TODO: handle unassigned metavariables
 
   | .useSorry =>
     let proof ← mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
     goal.assign proof
+
+
+/-- Query the Egg solver with the given facts -/
+def querySCTPTPEgg (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) :=
+  querySCTPTPSolver "Egg" Solver.TPTP.queryEggSolver exportFacts
+
+/-- Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver -/
+def runEgg (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  runSCTPTPSolver "runEgg" querySCTPTPEgg lemmas inhFacts
+
+@[tactic egg]
+def evalEgg : Tactic
+| `(egg | egg $instr $hints $[$uords]*) => do
+  let parsedInstr ← parseInstr instr
+  evalSCTPTPSolverTactic "Egg" runEgg parsedInstr hints uords
 | _ => throwUnsupportedSyntax
 
 
-open Embedding.Lam in
-def queryTPTPGoeland (exportFacts : Array REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
-  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
-  let lamEVarTy ← LamReif.getLamEVarTy
-  let exportLamTerms ← exportFacts.mapM (fun re => do
-    match re with
-    | .valid [] t => return t
-    | _ => throwError "{decl_name%} :: Unexpected error")
-  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
-    lam2FOF lamVarTy lamEVarTy exportLamTerms
-  else
-    lam2TH0 lamVarTy lamEVarTy exportLamTerms
-  trace[auto.tptp.printQuery] "\n{query}"
-  let (proven, tptpProof) ← Solver.TPTP.queryGoelandSolver query
-  if proven then
-    try
-      let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
-      return proofSteps
-    catch e =>
-      throwError "Goeland found a proof, but proof reification failed with {e.toMessageData}"
-  else
-    throwError "Goeland failed to find proof"
+/-- Query the Goeland solver with the given facts -/
+def queryscTPTPGoeland (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) :=
+  querySCTPTPSolver "Goeland" Solver.TPTP.queryGoelandSolver exportFacts
 
-/--
-  Run `auto`'s monomorphization and preprocessing, then send the problem to Goeland solver
--/
-def runGoeland
-  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
-  withDefault do
-    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {decl_name%}:" lemmas
-    let lemmas ← rewriteIteCondDecide lemmas
-    let (proofsteps, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.ProofStep)) do
-      let s ← get
-      let u ← computeMaxLevel s.facts
-      (reifMAction s.facts s.inhTys s.inds).run' {u := u})
-    return proofsteps
-where
-  reifMAction
-    (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
-    (minds : Array (Array SimpleIndVal)) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
-    let exportFacts ← LamReif.reifFacts uvalids
-    let mut exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
-    let _ ← LamReif.reifInhabitations uinhs
-    LamReif.printValuation
-    -- **TPTP invocation and Premise Selection**
-    if auto.tptp.get (← getOptions) then
-      let proofsteps ← queryTPTPGoeland exportFacts
-      return proofsteps
-    throwError "auto.tptp is not enabled"
+/-- Run `auto`'s monomorphization and preprocessing, then send the problem to Goeland solver -/
+def runGoeland (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  runSCTPTPSolver "runGoeland" queryscTPTPGoeland lemmas inhFacts
 
 @[tactic goeland]
 def evalGoeland : Tactic
-| `(goeland | goeland $instr $hints $[$uords]*) => withMainContext do
-  let goal ← getMainGoal
-  let currentGoalName := `_currentGoalName
-  liftMetaTactic fun g => do
-    let [newG] ← g.apply (.const ``Classical.byContradiction [])
-      | throwError "{decl_name%} :: Too many arguments"
-    let newG ← newG.introN 1 [currentGoalName]
-    return [newG.2]
-
-  let instr ← parseInstr instr
-  match instr with
-  | .none => withMainContext do
-    let (lemmas, inhFacts) ← collectAllLemmas hints uords #[FVarId.mk `_currentGoalName]
-    let proofsteps ← runGoeland lemmas inhFacts
-
-    try
-      let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
-      for (proofstep, i) in proofsteps.zipWithIndex do
-        proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
-      trace[auto.tptp.printProof] "###########################################"
-      trace[auto.tptp.printProof] "Proof steps (backward):"
-      reconstructProof proofsteps proofStepNameToIndex
-    catch e =>
-      throwError "Goeland found a proof, but reconstruction failed with:\n{e.toMessageData}"
-  | .useSorry =>
-    let proof ← mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
-    goal.assign proof
+| `(goeland | goeland $instr $hints $[$uords]*) => do
+  let parsedInstr ← parseInstr instr
+  evalSCTPTPSolverTactic "Goeland" runGoeland parsedInstr hints uords
 | _ => throwUnsupportedSyntax
-
 
 end Auto
 

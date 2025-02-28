@@ -837,14 +837,34 @@ def instMultImpl (args : List (String × Expr)) (proofstep : ProofStep) : Tactic
                   | Expr.const n _ => if funNamesPosArity.contains n then some exprsPosArity[funNamesPosArity.indexOf n]! else none
                   | _ => none))
   -- Then generalize
-  mvarId.withContext do
+  withMainContext do
     for (expr, funName) in exprs.zip funNames do
       let args : Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
       let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
       let mvarIdLoc ← getMainGoal
       let (_, _, mvarIdLoc) ← mvarIdLoc.generalizeHyp args hyps
-      mvarIdLoc.withContext do
+      withMainContext do
         replaceMainGoal [mvarIdLoc]
+
+/--
+  Setect metavariables that have not been yet assigned in (t : Expr), and assign them using Classical.choice
+-/
+def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
+  pure ()
+  -- let mvars := (t.collectMVars {}).result
+  -- for mvarId in mvars do
+  --   let decl ← mvarId.getDecl
+  --   -- Check if metavariable is still unassigned
+  --   if (← mvarId.isAssignable) then
+  --     let type ← instantiateMVars decl.type
+  --     -- Assign the type to `Nat` if it is not assigned yet
+  --     let type := if !type.hasMVar then type else mkConst ``Nat
+  --     let currentMainGoal ← getMainGoal
+  --     replaceMainGoal [mvarId]
+  --     evalTactic (← `(tactic| apply Classical.choice inferInstance))
+  --     replaceMainGoal [currentMainGoal]
+  --     -- mvarId.assign default
+  --     trace[auto.tptp.printProof] "Assigned metavariable {mvarId} of type {← ppExpr type} with `default`"
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -894,6 +914,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     trace[auto.tptp.printProof] "leftForall: {hypName}"
     evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    assignMetaVars t
     evalSpecialize psName t
 
   | rightAnd i => do
@@ -924,6 +945,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
+    assignMetaVars t
     evalSpecialize psName t
 
   | rightForall i y => do
@@ -1044,6 +1066,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
     evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
+    assignMetaVars t
     evalSpecialize psName t
 
   | leftNotAll i y => do
@@ -1366,7 +1389,7 @@ example (α : Type) (f : α -> α) (a : α)
   f a = a := by
   egg
 
-example (α : Type) (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
+example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
   goeland
 
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by

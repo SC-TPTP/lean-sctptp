@@ -641,7 +641,7 @@ def ParsingInfo.addSkolem (pi : ParsingInfo) (name : String) (s : LamSort) : Met
   let newPi : ParsingInfo := {
     pi with
     proverSkolem := pi.proverSkolem.insert name (s, pi.proverSkolem.size),
-    skolemExpr := pi.skolemExpr.push (← Meta.mkFreshExprMVar none)
+    skolemExpr := pi.skolemExpr.push (← Meta.mkFreshExprMVar none .natural (Name.str .anonymous name))
   }
   return newPi
 
@@ -870,53 +870,53 @@ where
       | _ => .error s!"term2LamTerm :: Non-function head `{head}` applied to argument"
     | _, _ => .error s!"term2LamTerm :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
 
--- open Embedding.Lam in
--- /--
---   Turn TSTP term into LamSort/LamTerm
---   This function is only for zipperposition's output
--- -/
--- def getProof (lamVarTy lamEVarTy : Array LamSort) (cmds : Array Command) : MetaM (Array LamTerm) := do
---   let mut ret := #[]
---   let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}⟩
---   for ⟨cmd, args⟩ in cmds do
---     match cmd with
---     | "thf" | "tff" | "cnf" | "fof" =>
---       match args with
---       | [⟨.ident name, []⟩, ⟨.ident kind, _⟩, val] =>
---         if kind != "type" then
---           match term2LamTerm pi val with
---           | .term (.base .prop) t =>
---             ret := ret.push t
---           | .error e => throwError (decl_name% ++ " :: " ++ e)
---           | lc => throwError "{decl_name%} :: Unexpected LamConstr {lc}, expected term"
---         else
---           match val with
---           | ⟨.ident name, [ty]⟩ =>
---             -- In zipperposition, skolems start with `sk_` or `#sk_`
---             if name.take 3 == "sk_" || name.take 3 == "#sk" then
---               match term2LamTerm pi ty with
---               | .sort s => pi := pi.addSkolem name s
---               | lc => throwError "{decl_name%} :: Unexpected LamConstr {lc}, expected sort"
---             else
---               continue
---           | _ => continue
---       | _ => continue
---     | "include" => throwError "{decl_name%} :: `include` should not occur in proof output of TPTP solvers"
---     | _ => throwError "{decl_name%} :: Unknown command {cmd}"
---   return ret
+open Embedding.Lam in
+/--
+  Turn TSTP term into LamSort/LamTerm
+  This function is only for zipperposition's output
+-/
+def getProof (lamVarTy lamEVarTy : Array LamSort) (cmds : Array Command) : MetaM (Array LamTerm) := do
+  let mut ret := #[]
+  let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}, #[]⟩
+  for ⟨cmd, args⟩ in cmds do
+    match cmd with
+    | "thf" | "tff" | "cnf" | "fof" =>
+      match args with
+      | [⟨.ident name, []⟩, ⟨.ident kind, _⟩, val] =>
+        if kind != "type" then
+          match term2LamTerm pi val with
+          | .term (.base .prop) t =>
+            ret := ret.push t
+          | .error e => throwError (decl_name% ++ " :: " ++ e)
+          | lc => throwError "{decl_name%} :: Unexpected LamConstr {lc}, expected term"
+        else
+          match val with
+          | ⟨.ident name, [ty]⟩ =>
+            -- In zipperposition, skolems start with `sk_` or `#sk_`
+            if name.take 3 == "sk_" || name.take 3 == "#sk" then
+              match term2LamTerm pi ty with
+              | .sort s => pi ← pi.addSkolem name s
+              | lc => throwError "{decl_name%} :: Unexpected LamConstr {lc}, expected sort"
+            else
+              continue
+          | _ => continue
+      | _ => continue
+    | "include" => throwError "{decl_name%} :: `include` should not occur in proof output of TPTP solvers"
+    | _ => throwError "{decl_name%} :: Unknown command {cmd}"
+  return ret
 
--- /-- Returns the unsat core of an array of TSTP steps -/
--- def unsatCore (cmds : Array Command) : MetaM (Array Nat) := do
---   let mut res := #[]
---   for ⟨_, args⟩ in cmds do
---     if args.length > 1 then
---       if let ⟨.ident kind, []⟩ := args[1]! then
---         if ["axiom", "conjecture", "negated_conjecture"].contains kind then
---           if let ⟨.ident id, []⟩ := args[0]! then
---             if id.take 4 == "fact" then
---               if let .some n := (id.drop 4).toNat? then
---                 res := res.push n
---   return res
+/-- Returns the unsat core of an array of TSTP steps -/
+def unsatCore (cmds : Array Command) : MetaM (Array Nat) := do
+  let mut res := #[]
+  for ⟨_, args⟩ in cmds do
+    if args.length > 1 then
+      if let ⟨.ident kind, []⟩ := args[1]! then
+        if ["axiom", "conjecture", "negated_conjecture"].contains kind then
+          if let ⟨.ident id, []⟩ := args[0]! then
+            if id.take 4 == "fact" then
+              if let .some n := (id.drop 4).toNat? then
+                res := res.push n
+  return res
 
 
 /- #####################################
@@ -1101,7 +1101,7 @@ inductive InferenceRule where
   | clausify                 (i : Nat)
   | elimIffRefl              (i : Nat) (j : Nat)
   | res                      (i : Nat)
-  | instMult                 (args : List (String × Expr × List String))
+  | instMult                 (args : List (String × Expr))
 deriving Inhabited, Repr
 
 open InferenceRule in
@@ -1162,7 +1162,7 @@ def InferenceRule.toString : InferenceRule → String
   | elimIffRefl i j                => s!"elimIffRefl {i} {j}"
   | res i                          => s!"res {i}"
   | instMult args =>
-    let argsStr := String.intercalate ", " (args.map fun (x, y, z) => s!"{x}:({y}, [{String.intercalate ", " z}])")
+    let argsStr := String.intercalate ", " (args.map fun (x, y) => s!"{x}: {y}")
     s!"instMult [{argsStr}]"
 
 instance : ToString InferenceRule where

@@ -783,7 +783,7 @@ def evalApply (e : Expr) : TacticM Unit := withMainContext do
 
 
 def resolveTypes (e : Expr) : TacticM Expr := withMainContext do
-  let e ← instantiateMVars e
+  let e ← instantiateMVars (← Core.betaReduce e)
   Meta.check e
   return e
 
@@ -793,7 +793,17 @@ def getHypExpr (n : Name) : TacticM Expr := withMainContext do
     | throwError m!"{decl_name%} : Could not find {n} in context {lctx.getFVars}"
   return ← resolveTypes localDecl.type
 
-def getHypFromExpr (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
+def getLocalContextStr : TacticM String := withMainContext do
+  let lctx ← getLCtx
+  let mut s := ""
+  for decl in lctx do
+    let ty ← resolveTypes decl.type
+    s := s ++ s!"- {decl.userName} : {ty}\n"
+  let goalStr ← (← getMainGoal).getType
+  s := s ++ s!"|- {goalStr}"
+  return s
+
+def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
   let mut e ← resolveTypes e
   if addNot then
     e := mkApp (mkConst ``Not) e
@@ -803,19 +813,41 @@ def getHypFromExpr (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := wi
     if ← isDefEq ty e then
       return decl
 
-  -- Build detailed error message
-  let mut s := ""
-  for decl in lctx do
-    let ty ← Core.betaReduce (← instantiateMVars decl.type)
-    s := s ++ s!"- {decl.userName} : {ty}\n"
-  let goalStr ← (← getMainGoal).getType
-  throwError s!"Cannot find hypothesis for `{e}` (type: {← inferType e}) in context:\n{s}\n|- {goalStr}"
+  throwError s!"Cannot find hypothesis for `{e}` (type: {← inferType e}) in context:\n{← getLocalContextStr}"
 
 def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainContext do
-  getHypFromExpr e addNot >>= fun decl => return decl.userName
+  getHypDecl e addNot >>= fun decl => return decl.userName
 
-def getHypProof (e : Expr) (addNot : Bool := False) : TacticM Expr := withMainContext do
-  getHypFromExpr e addNot >>= fun decl => return .fvar decl.fvarId
+def getHypFvar (e : Expr) (addNot : Bool := false) : TacticM FVarId := withMainContext do
+  getHypDecl e addNot >>= fun decl => return decl.fvarId
+
+open Parser.TPTP Parser.TPTP.InferenceRule in
+def instMult (args : List (String × Expr)) (proofstep : ProofStep) : TacticM Unit := withMainContext do
+  let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
+  let funNames := args.map fun ⟨funNameStr, _⟩ => Name.str .anonymous funNameStr
+  let exprs ← args.mapM fun ⟨_, expr⟩ => do resolveTypes expr
+  let mut mvarId ← getMainGoal
+  -- branch cases: for expr with arity > 0, we need to do some `changeLocalDecl`
+  let exprsPosArity ← exprs.filterM fun expr => do
+    match expr with
+    | Expr.lam _ _ _ _ => pure true
+    | _ => pure false
+  if exprsPosArity.length > 0 then
+    for hypDecl in hypDecls do
+      let hypExpr ← resolveTypes hypDecl.type
+      let hypFvar := hypDecl.fvarId
+      mvarId ← MVarId.changeLocalDecl mvarId hypFvar
+                (hypExpr.replace (fun e =>
+                  match e with
+                  | Expr.const n _ => if funNames.contains n then some exprs[funNames.indexOf n] else none
+                  | _ => none))
+  -- Then generalize
+  mvarId.withContext do
+    let args: Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
+    let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
+    let (_, _, mvarIdloc) ← mvarId.generalizeHyp args hyps
+    mvarIdloc.withContext do
+      replaceMainGoal [mvarIdloc]
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -916,7 +948,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
     withMainContext do
       let equality ← if backward then getHypExpr eqHypNameSymm else pure equality
-      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, t, u, (← getHypProof equality)]
+      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, t, u, Expr.fvar (← getHypFvar equality)]
       evalTactic (← `(tactic| apply $(mkIdent P_u_hypName)))
       evalApply subst
       evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
@@ -934,7 +966,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
     withMainContext do
       let equality ← if backward then pure equality else getHypExpr eqHypNameSymm
-      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, u, t, (← getHypProof equality)]
+      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, u, t, Expr.fvar (← getHypFvar equality)]
       haveExpr psName (P.app t)
       evalApply subst
       evalTactic (← `(tactic| exact $(mkIdent P_u_hypName)))
@@ -952,7 +984,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
     withMainContext do
       let equality ← if backward then getHypExpr eqHypNameSymm else pure equivalence
-      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[phi, psi, R, (← getHypProof equality)])
+      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[phi, psi, R, Expr.fvar (← getHypFvar equality)])
       evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName)))
       evalApply subst
       evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
@@ -970,14 +1002,59 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
     withMainContext do
       let equality ← if backward then pure equivalence else getHypExpr eqHypNameSymm
-      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[psi, phi, R, (← getHypProof equality)])
+      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[psi, phi, R, Expr.fvar (← getHypFvar equality)])
       haveExpr psName (R.app phi)
       evalApply subst
       evalTactic (← `(tactic| exact $(mkIdent R_psi_hypName)))
 
-  -- use Lean.MVarId.changeLocalDecl (mvarId : MVarId) (fvarId : FVarId) (typeNew : Expr)
-  | instFun funName expr => do evalTactic (← `(tactic| sorry))
-  | instPred predName expr => do evalTactic (← `(tactic| sorry))
+  | instFun funNameStr expr => do
+    let funName := Name.str .anonymous funNameStr
+    let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
+    let expr ← resolveTypes expr
+    let mut mvarId ← getMainGoal
+    -- branch cases: if expr is a function of arity > 0, we need to do some `changeLocalDecl`
+    match expr with
+    | Expr.lam _ _ _ _ => do
+      for hypDecl in hypDecls do
+        let hypExpr ← resolveTypes hypDecl.type
+        let hypFvar := hypDecl.fvarId
+        if hypExpr.containsConst fun n => n == funName then
+          mvarId ← MVarId.changeLocalDecl mvarId hypFvar
+                    (hypExpr.replace (fun e =>
+                      if e.isConstOf funName then some expr else none))
+    | _ => pure ()
+    -- Then generalize
+    mvarId.withContext do
+      let args: Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
+      let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
+      let (_, _, mvarIdloc) ← mvarId.generalizeHyp args hyps
+      mvarIdloc.withContext do
+        replaceMainGoal [mvarIdloc]
+
+  | instPred predNameStr expr => do
+    let predName := Name.str .anonymous predNameStr
+    let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
+    let expr ← resolveTypes expr
+    let mut mvarId ← getMainGoal
+    -- branch cases: if expr is a function of arity > 0, we need to do some `changeLocalDecl`
+    match expr with
+    | Expr.lam _ _ _ _ => do
+      for hypDecl in hypDecls do
+        let hypExpr ← resolveTypes hypDecl.type
+        let hypFvar := hypDecl.fvarId
+        if hypExpr.containsConst fun n => n == predName then
+          mvarId ← MVarId.changeLocalDecl mvarId hypFvar
+                    (hypExpr.replace (fun e =>
+                      if e.isConstOf predName then some expr else none))
+    | _ => pure ()
+    -- Then generalize
+    mvarId.withContext do
+      let args: Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some predName, none⟩)).toArray
+      let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
+      let (_, _, mvarIdloc) ← mvarId.generalizeHyp args hyps
+      mvarIdloc.withContext do
+        replaceMainGoal [mvarIdloc]
+
   | rightEpsilon A X t => do evalTactic (← `(tactic| sorry))
   | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
 
@@ -996,6 +1073,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | leftNotImplies i => do
     let hypName ← getHypName proofstep.antecedents[i]!
+    trace[auto.tptp.printProof] "leftNotImplies: {hypName} {← resolveTypes proofstep.antecedents[i]!}"
     let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
     evalTactic (← `(tactic| rcases (not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
 
@@ -1050,8 +1128,15 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
 
   | clausify _ => do evalTactic (← `(tactic| tauto))
   | elimIffRefl i j => do evalTactic (← `(tactic| sorry))
-  | res i => do evalTactic (← `(tactic| sorry))
-  | instMult triplets => do evalTactic (← `(tactic| sorry))
+
+  | res i => do
+    let formula ← resolveTypes premisesProofstep[0]!.consequents[i]!
+    haveExpr psName formula
+    Meta.check (← (← getMainGoal).getType)
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
+
+  | instMult args => do instMult args proofstep
+
 
 
 partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
@@ -1059,9 +1144,10 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
 : TacticM Unit := do
   if proofsteps.size != 0 then
     let proofstep := proofsteps[proofsteps.size - 1]!
-    trace[auto.tptp.printProof] s!"  {proofstep}"
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
+    trace[auto.tptp.printProof] s!"  {proofstep}"
+    trace[auto.tptp.printProof] "    Current context:\n{← getLocalContextStr}"
     trace[auto.tptp.printProof] s!"    Premises: {premisesProofstep.map (fun ps => ps.name)}"
     try
       applyProofStep proofstep premisesProofstep.toArray
@@ -1365,7 +1451,8 @@ example (α : Type) (f : α -> α) (a : α)
   (h1 : ∀ x, x = (f (f (f ( f x)))))
   (h2 : a =  f (f (f (f ( f a))))) :
   f a = a := by
-  egg
+  -- egg
+  goeland
 
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
   goeland
@@ -1406,11 +1493,8 @@ example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c :
   change (q ((fun X => g (X, X)) c)) at h1
   change (((fun X => g (X, X)) c) = c) at h2
   generalize (fun X => g ( X, X)) = F at *
-
-  rw [show ∀ x, g (x, x) = (fun y => g (y, y)) x by intros; rfl] at *
-  generalize (fun x => g (x, x)) = F at *
-
   sorry
 
 example (p : Nat → Nat) (g : Nat × Nat → Nat) (c : Nat) (y : Nat) : p (g (c, c)) = y := by
   rw [show ∀ x, g (x, x) = (fun y => g (y, y)) x by intros; rfl] at *
+  sorry

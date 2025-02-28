@@ -233,8 +233,8 @@ def queryGoelandSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Comma
   let stdout ← solver.stdout.readToEnd
   let stderr ← solver.stderr.readToEnd
   solver.kill
-  let proven := (stderr == "")
   let proof ← IO.FS.readFile "./.goeland_problem_sol.p"
+  let proven := (stderr == "" ∧ proof != "")
   if proven then
     trace[auto.tptp.result] "Proof: \n{proof}"
   else

@@ -1099,7 +1099,7 @@ inductive InferenceRule where
   | rightNnf                 (i : Nat) (j : Nat)
   | rightPrenex              (i : Nat) (j : Nat)
   | clausify                 (i : Nat)
-  | elimIffRefl              (i : Nat) (j : Nat)
+  | elimIffRefl              (i : Nat)
   | res                      (i : Nat)
   | instMult                 (args : List (String × Expr))
 deriving Inhabited, Repr
@@ -1159,7 +1159,7 @@ def InferenceRule.toString : InferenceRule → String
   | rightNnf i j                   => s!"rightNnf {i} {j}"
   | rightPrenex i j                => s!"rightPrenex {i} {j}"
   | clausify i                     => s!"clausify {i}"
-  | elimIffRefl i j                => s!"elimIffRefl {i} {j}"
+  | elimIffRefl i                  => s!"elimIffRefl {i}"
   | res i                          => s!"res {i}"
   | instMult args =>
     let argsStr := String.intercalate ", " (args.map fun (x, y) => s!"{x}: {y}")
@@ -1406,7 +1406,7 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
         | "rightNnf"                 => pure (rightNnf (parseNat params[0]!) (parseNat params[1]!))
         | "rightPrenex"              => pure (rightPrenex (parseNat params[0]!) (parseNat params[1]!))
         | "clausify"                 => pure (clausify (parseNat params[0]!))
-        | "elimIffRefl"              => pure (elimIffRefl (parseNat (params[0]!)) (parseNat (params[1]!)))
+        | "elimIffRefl"              => pure (elimIffRefl (parseNat (params[0]!)))
         | "res"                      => pure (res (parseNat params[0]!))
         | "instMult"                 => panic! "instMult not implemented"
 

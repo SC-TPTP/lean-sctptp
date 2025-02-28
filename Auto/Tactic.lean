@@ -821,33 +821,37 @@ def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainCon
 def getHypFvar (e : Expr) (addNot : Bool := false) : TacticM FVarId := withMainContext do
   getHypDecl e addNot >>= fun decl => return decl.fvarId
 
-open Parser.TPTP Parser.TPTP.InferenceRule in
-def instMult (args : List (String × Expr)) (proofstep : ProofStep) : TacticM Unit := withMainContext do
+open Parser.TPTP in
+def instMultImpl (args : List (String × Expr)) (proofstep : ProofStep) : TacticM Unit := withMainContext do
   let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
   let funNames := args.map fun ⟨funNameStr, _⟩ => Name.str .anonymous funNameStr
   let exprs ← args.mapM fun ⟨_, expr⟩ => do resolveTypes expr
   let mut mvarId ← getMainGoal
   -- branch cases: for expr with arity > 0, we need to do some `changeLocalDecl`
-  let exprsPosArity ← exprs.filterM fun expr => do
+  let argsPosArity := (exprs.zip funNames).filter fun (expr, _) =>
     match expr with
-    | Expr.lam _ _ _ _ => pure true
-    | _ => pure false
-  if exprsPosArity.length > 0 then
+    | Expr.lam _ _ _ _ => true
+    | _ => false
+  if argsPosArity.length > 0 then
+    let funNamesPosArity := argsPosArity.map fun (_, funName) => funName
+    let exprsPosArity := argsPosArity.map fun (expr, _) => expr
     for hypDecl in hypDecls do
       let hypExpr ← resolveTypes hypDecl.type
       let hypFvar := hypDecl.fvarId
       mvarId ← MVarId.changeLocalDecl mvarId hypFvar
                 (hypExpr.replace (fun e =>
                   match e with
-                  | Expr.const n _ => if funNames.contains n then some exprs[funNames.indexOf n] else none
+                  | Expr.const n _ => if funNamesPosArity.contains n then some exprsPosArity[funNamesPosArity.indexOf n]! else none
                   | _ => none))
   -- Then generalize
   mvarId.withContext do
-    let args: Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
-    let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
-    let (_, _, mvarIdloc) ← mvarId.generalizeHyp args hyps
-    mvarIdloc.withContext do
-      replaceMainGoal [mvarIdloc]
+    for (expr, funName) in exprs.zip funNames do
+      let args : Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
+      let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
+      let mvarIdLoc ← getMainGoal
+      let (_, _, mvarIdLoc) ← mvarIdLoc.generalizeHyp args hyps
+      mvarIdLoc.withContext do
+        replaceMainGoal [mvarIdLoc]
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -1007,53 +1011,8 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       evalApply subst
       evalTactic (← `(tactic| exact $(mkIdent R_psi_hypName)))
 
-  | instFun funNameStr expr => do
-    let funName := Name.str .anonymous funNameStr
-    let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
-    let expr ← resolveTypes expr
-    let mut mvarId ← getMainGoal
-    -- branch cases: if expr is a function of arity > 0, we need to do some `changeLocalDecl`
-    match expr with
-    | Expr.lam _ _ _ _ => do
-      for hypDecl in hypDecls do
-        let hypExpr ← resolveTypes hypDecl.type
-        let hypFvar := hypDecl.fvarId
-        if hypExpr.containsConst fun n => n == funName then
-          mvarId ← MVarId.changeLocalDecl mvarId hypFvar
-                    (hypExpr.replace (fun e =>
-                      if e.isConstOf funName then some expr else none))
-    | _ => pure ()
-    -- Then generalize
-    mvarId.withContext do
-      let args: Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
-      let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
-      let (_, _, mvarIdloc) ← mvarId.generalizeHyp args hyps
-      mvarIdloc.withContext do
-        replaceMainGoal [mvarIdloc]
-
-  | instPred predNameStr expr => do
-    let predName := Name.str .anonymous predNameStr
-    let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
-    let expr ← resolveTypes expr
-    let mut mvarId ← getMainGoal
-    -- branch cases: if expr is a function of arity > 0, we need to do some `changeLocalDecl`
-    match expr with
-    | Expr.lam _ _ _ _ => do
-      for hypDecl in hypDecls do
-        let hypExpr ← resolveTypes hypDecl.type
-        let hypFvar := hypDecl.fvarId
-        if hypExpr.containsConst fun n => n == predName then
-          mvarId ← MVarId.changeLocalDecl mvarId hypFvar
-                    (hypExpr.replace (fun e =>
-                      if e.isConstOf predName then some expr else none))
-    | _ => pure ()
-    -- Then generalize
-    mvarId.withContext do
-      let args: Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some predName, none⟩)).toArray
-      let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
-      let (_, _, mvarIdloc) ← mvarId.generalizeHyp args hyps
-      mvarIdloc.withContext do
-        replaceMainGoal [mvarIdloc]
+  | instFun funNameStr expr => do instMultImpl [(funNameStr, expr)] proofstep
+  | instPred predNameStr expr => do instMultImpl [(predNameStr, expr)] proofstep
 
   | rightEpsilon A X t => do evalTactic (← `(tactic| sorry))
   | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
@@ -1127,15 +1086,20 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
       throwError "Prenex normalization failed, you are probably missing a `Nonempty` instance. Error message:\n{e.toMessageData}"
 
   | clausify _ => do evalTactic (← `(tactic| tauto))
-  | elimIffRefl i j => do evalTactic (← `(tactic| sorry))
+
+  | elimIffRefl i => do
+    let formula ← resolveTypes premisesProofstep[0]!.antecedents[i]!
+    haveExpr psName formula
+    Meta.check (← (← getMainGoal).getType)
+    evalTactic (← `(tactic| apply intros; apply Iff.refl))
 
   | res i => do
-    let formula ← resolveTypes premisesProofstep[0]!.consequents[i]!
+    let formula ← resolveTypes (mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[i]!)
     haveExpr psName formula
     Meta.check (← (← getMainGoal).getType)
     evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
 
-  | instMult args => do instMult args proofstep
+  | instMult args => do instMultImpl args proofstep
 
 
 
@@ -1451,8 +1415,8 @@ example (α : Type) (f : α -> α) (a : α)
   (h1 : ∀ x, x = (f (f (f ( f x)))))
   (h2 : a =  f (f (f (f ( f a))))) :
   f a = a := by
-  -- egg
-  goeland
+  egg
+  -- goeland
 
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
   goeland
@@ -1483,6 +1447,7 @@ example (α : Type) (q : α → Prop) (f : α → α) (g : α × α → α) (c :
     sorry
 
   generalize (f c) = X at *
+  have h : ∀ x₁: α, q x₁ ↔ q x₁ := by intros; apply Iff.refl
   sorry
 
 -- fof(a6, axiom, [q(F(c))] --> []).

@@ -1234,6 +1234,49 @@ def InferenceRule.prettyPrint : InferenceRule → MetaM String
     let argsStr := String.intercalate ", " (← (args.mapM fun (x, y) => do pure s!"{x}: {← ppExpr y}"))
     pure s!"instMult [{argsStr}]"
 
+instance : Lean.ToMessageData InferenceRule where
+  toMessageData rule := match rule with
+    -- Rules that take only number parameters
+    | .rightTrue i | .leftFalse i | .hyp i | .leftWeaken i | .rightWeaken i | .cut i
+    | .leftAnd i | .leftOr i | .leftImplies i | .leftIff i | .leftNot i
+    | .rightAnd i | .rightOr i | .rightImplies i | .rightIff i | .rightNot i
+    | .rightRefl i | .leftHyp i | .leftNotAnd i | .leftNotOr i | .leftNotImplies i
+    | .leftNotIff i | .leftNotNot i | .rightRelIff i | .clausify i | .elimIffRefl i
+    | .res i => m!"{rule.toString} [{i}]"
+
+    -- Rules with pairs of indices
+    | .rightNnf i j | .rightPrenex i j => m!"{rule.toString} [{i}, {j}]"
+
+    -- Rules with index and string
+    | .leftEx i y | .rightForall i y | .leftEpsilon i y | .leftNotAll i y => m!"{rule.toString} [{i}, {y}]"
+
+    -- Rules with index and expression
+    | .leftForall i t | .rightEx i t | .leftNotEx i t => m!"{rule.toString} [{i}, {t}]"
+
+    -- Rules with more complex parameters
+    | .rightSubstEq i b P | .leftSubstEq i b P
+    | .rightSubstIff i b P | .leftSubstIff i b P => m!"{rule.toString} [{i}, {b}, {P}]"
+
+    -- Rules with string and expression
+    | .instFun F t | .instPred F t => m!"{rule.toString} [{F}, {t}]"
+
+    -- Rules with two expressions and a string
+    | .rightEpsilon A x t => m!"{rule.toString} [{A}, {x}, {t}]"
+
+    -- No-parameter rules
+    | .congruence => m!"congruence"
+
+    -- Rules with list parameters
+    | .rightSubstMulti i P vars | .leftSubstMulti i P vars => m!"{rule.toString} [{i}, {P}, {vars}]"
+
+    -- Rules with expressions only
+    | .rightSubstEqForallLocal i R Z | .rightSubstEqForall i R Z
+    | .rightSubstIffForallLocal i R Z | .rightSubstIffForall i R Z => m!"{rule.toString} [{i}, {R}, {Z}]"
+
+    -- Special case for instMult with list of pairs
+    | .instMult args =>
+      let argsStr := Lean.MessageData.joinSep (args.map (fun (x, y) => m!"{x}: {y}")) ", "
+      m!"instMult [{argsStr}]"
 
 def parseBool (pt : Term) : Bool :=
   match pt with
@@ -1503,6 +1546,26 @@ def ProofStep.prettyPrint : ProofStep → MetaM String
   let con ← con.mapM ppExpr
   pure s!"Name = {name}\nRule = {rule}\nPremises = {premises}\nAntecedents = {ant}\nConsequents = {con}"
 
+instance : Lean.ToMessageData ProofStep where
+  toMessageData ps :=
+    let nameField := m!"Name: " ++ ps.name
+    let ruleField     := m!"Rule: {ps.rule}"
+    let premisesField := m!"Premises: " ++
+      (Lean.MessageData.sbracket <| Lean.MessageData.joinSep (ps.premises.map Lean.toMessageData) (Lean.Format.line))
+
+    let antField := m!"Antecedents: " ++
+      (Lean.MessageData.sbracket <| Lean.MessageData.joinSep (ps.antecedents.map Lean.toMessageData) (", " ++ Lean.Format.line))
+
+    let conField := m!"Consequents: " ++
+      (Lean.MessageData.sbracket <| Lean.MessageData.joinSep (ps.consequents.map Lean.toMessageData) (", " ++ Lean.Format.line))
+
+    Lean.MessageData.group <|
+      nameField ++ Lean.Format.align true ++
+      ruleField ++ Lean.Format.align true ++
+      premisesField ++ Lean.Format.align true ++
+      antField ++ Lean.Format.align true ++
+      conField
+
 open Embedding.Lam in
 /--
   Turn SC-TPTP proof into reified ProofSteps
@@ -1562,11 +1625,11 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
             pure ([], [expr])
 
         -- ### Instantiating the proof step
-        let step := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩
+        let step: ProofStep := ⟨name, infRec.rule, infRec.premises, antecedents, consequents⟩
         ret := ret.push step
 
-        trace[auto.tptp.printProof] s!"Reconstructed proof step:\n{← step.prettyPrint}"
-        trace[auto.tptp.printProof] s!"New variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => s!"{x}")}"
+        trace[auto.tptp.printProof] "Reconstructed proof step:\n{step}"
+        trace[auto.tptp.printProof] "New variables introduced so far: {pi.proverSkolem.toList.map (fun (x, _) => s!"{x}")}"
 
       | _ => continue
     | _ => throwError "{decl_name%} :: Unknown command {cmd}"

@@ -787,16 +787,6 @@ def getHypExpr (n : Name) : TacticM Expr := withMainContext do
     | throwError m!"{decl_name%} : Could not find {n} in context {lctx.getFVars}"
   return ← Parser.TPTP.resolveTypes localDecl.type
 
-def getLocalContextStr : TacticM String := withMainContext do
-  let lctx ← getLCtx
-  let mut s := ""
-  for decl in lctx do
-    let ty ← Parser.TPTP.resolveTypes decl.type
-    s := s ++ s!"- {decl.userName} : {← ppExpr ty}\n"
-  let goalStr ← ppExpr (← (← getMainGoal).getType)
-  s := s ++ s!"⊢ {goalStr}"
-  return s
-
 def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
   let mut e ← Parser.TPTP.resolveTypes e
   if addNot then
@@ -806,7 +796,7 @@ def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMa
     let ty := decl.type
     if ← isDefEq ty e then
       return decl
-  throwError s!"Cannot find hypothesis for `{← ppExpr e}` (type: {← ppExpr (← inferType e)}) in context:\n{← getLocalContextStr}"
+  throwError "Cannot find hypothesis for `{e}` (type: {← inferType e}) in context:\n{← getMainGoal}"
 
 def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainContext do
   getHypDecl e addNot >>= fun decl => return decl.userName
@@ -850,21 +840,22 @@ def instMultImpl (args : List (String × Expr)) (proofstep : ProofStep) : Tactic
   Setect metavariables that have not been yet assigned in (t : Expr), and assign them using Classical.choice
 -/
 def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
-  pure ()
-  -- let mvars := (t.collectMVars {}).result
-  -- for mvarId in mvars do
-  --   let decl ← mvarId.getDecl
-  --   -- Check if metavariable is still unassigned
-  --   if (← mvarId.isAssignable) then
-  --     let type ← instantiateMVars decl.type
-  --     -- Assign the type to `Nat` if it is not assigned yet
-  --     let type := if !type.hasMVar then type else mkConst ``Nat
-  --     let currentMainGoal ← getMainGoal
-  --     replaceMainGoal [mvarId]
-  --     evalTactic (← `(tactic| apply Classical.choice inferInstance))
-  --     replaceMainGoal [currentMainGoal]
-  --     -- mvarId.assign default
-  --     trace[auto.tptp.printProof] "Assigned metavariable {mvarId} of type {← ppExpr type} with `default`"
+  let mvars := (t.collectMVars {}).result
+  for mvarId in mvars do
+    let decl ← mvarId.getDecl
+    -- Check if metavariable is still unassigned
+    if (← mvarId.isAssignable) then
+      let type ← instantiateMVars decl.type
+      -- Assign the type to `Nat` if it is not assigned yet
+      let type := if !type.hasMVar then type else mkConst ``Nat
+      let currentMainGoal ← getMainGoal
+      let newMainGoal ← currentMainGoal.assert mvarId.name type (mkConst mvarId.name)
+      -- We then need to introduce the binding into the context.
+      let (_fvar, newMainGoal) ← newMainGoal.intro1P
+      replaceMainGoal [mvarId, newMainGoal]
+      evalTactic (← `(tactic| apply Classical.choice inferInstance))
+      -- mvarId.assign default
+      trace[auto.tptp.printProof] "Assigned metavariable {mvarId} of type {← ppExpr type} with `default`"
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -1126,8 +1117,8 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
     let proofstep := proofsteps[proofsteps.size - 1]!
     let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
     let premisesProofstep := premises.map (fun i => proofsteps[i]!)
-    trace[auto.tptp.printProof] "Current context:\n{← getLocalContextStr}"
-    trace[auto.tptp.printProof] s!"{← proofstep.prettyPrint}"
+    trace[auto.tptp.printProof] "Current context:{← getMainGoal}"
+    trace[auto.tptp.printProof] "Proofstep:\n{proofstep}"
     try
       applyProofStep proofstep premisesProofstep.toArray
     catch e =>

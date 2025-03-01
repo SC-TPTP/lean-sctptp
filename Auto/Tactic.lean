@@ -836,6 +836,7 @@ def instMultImpl (args : List (String × Expr)) (proofstep : ProofStep) : Tactic
       withMainContext do
         replaceMainGoal [mvarIdLoc]
 
+noncomputable def ClassicalChoice.{u} (α : Sort u) [inst : Nonempty α] := Classical.choice inst
 /--
   Setect metavariables that have not been yet assigned in (t : Expr), and assign them using Classical.choice
 -/
@@ -853,9 +854,11 @@ def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
       let newMainGoal ← currentMainGoal.assert mvarId.name type (mkConst mvarId.name)
       -- We then need to introduce the binding into the context.
       let (_fvar, newMainGoal) ← newMainGoal.intro1P
-      replaceMainGoal [mvarId, newMainGoal]
+      -- let expr ← mkAppOptM ``inferInstance #[type, .none]
+      mvarId.assign (← mkAppOptM ``ClassicalChoice #[type, .none])
+      replaceMainGoal [newMainGoal]
       try
-        evalTactic (← `(tactic| apply Classical.choice inferInstance))
+        -- evalTactic (← `(tactic| apply Classical.choice inferInstance))
         trace[auto.tptp.printProof] "Assigned metavariable {mvarId} using `Classical.choice`"
       catch e =>
         throwError "{decl_name%} :: Failed to assign metavariable {mvarId} using `Classical.choice`, probably because of a missing `Nonempty` instance.\nError: {e.toMessageData}"

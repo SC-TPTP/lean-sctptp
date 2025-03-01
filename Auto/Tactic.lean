@@ -845,9 +845,10 @@ def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
     let decl ← mvarId.getDecl
     -- Check if metavariable is still unassigned
     if (← mvarId.isAssignable) then
-      let type ← instantiateMVars decl.type
+      let type ← Parser.TPTP.resolveTypes decl.type
       -- Assign the type to `Nat` if it is not assigned yet
       let type := if !type.hasMVar then type else mkConst ``Nat
+      mvarId.setType type
       let currentMainGoal ← getMainGoal
       let newMainGoal ← currentMainGoal.assert mvarId.name type (mkConst mvarId.name)
       -- We then need to introduce the binding into the context.
@@ -858,6 +859,51 @@ def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
         trace[auto.tptp.printProof] "Assigned metavariable {mvarId} using `Classical.choice`"
       catch e =>
         throwError "{decl_name%} :: Failed to assign metavariable {mvarId} using `Classical.choice`, probably because of a missing `Nonempty` instance.\nError: {e.toMessageData}"
+
+open Parser.TPTP in
+def leftExRcases (psName : Name) (premisesProofstep : Array ProofStep) (proofstep : ProofStep) : TacticM Unit := withMainContext do
+    let (i, y) ←
+      match proofstep.rule with
+      | .leftEx i y | .rightForall i y | .leftNotAll i y => pure (i, y)
+      | _ => throwError "{decl_name%} :: Unexpected rule {proofstep.rule}"
+    let hypName ← getHypName proofstep.antecedents[i]!
+
+    -- Collect mvars in all antecedents and consequents of the premise proofstep
+    let psExprs := premisesProofstep.map fun ps => (ps.antecedents.toArray ++ ps.consequents.toArray)
+    let mvars := psExprs.foldl (init := #[]) fun mvars exprs =>
+      exprs.foldl (init := mvars) fun mvars e =>
+        mvars ++ (e.collectMVars {}).result
+
+    -- Check if any metavariable has the name y
+    let mut foundMVar := none
+    for mvarId in mvars do
+      let decl ← mvarId.getDecl
+      trace[auto.tptp.printProof] "mvarId: {decl.userName.toString}"
+      if decl.userName.toString == y then
+        foundMVar := some mvarId
+        break
+    trace[auto.tptp.printProof] "foundMVar: {foundMVar}"
+
+    -- Use either the found metavariable or create a new name
+    let yName := .str .anonymous y
+
+    match proofstep.rule with
+    | .leftEx _ _ => do
+      evalTactic (← `(tactic| rcases $(mkIdent hypName):ident with ⟨$(mkIdent yName), $(mkIdent psName)⟩))
+    | .rightForall _ _ | .leftNotAll _ _ => do
+      evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent yName), $(mkIdent psName)⟩))
+    | _ => throwError "{decl_name%} :: Unexpected rule {proofstep.rule}"
+
+    withMainContext do
+      -- If we found a metavariable, assign it to the variable created by rcases
+      if let some mvarId := foundMVar then
+        -- Get the newly created variable
+        let lctx ← getLCtx
+        if let some decl := lctx.findFromUserName? yName then
+          mvarId.assign (mkFVar decl.fvarId)
+        else
+          trace[auto.tptp.printProof] "{decl_name%} Fatal error: could not find {yName} in context"
+
 
 open Parser.TPTP Parser.TPTP.InferenceRule in
 /-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
@@ -898,10 +944,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
 
   | leftNot _ => pure ()
-
-  | leftEx i y => do
-    let hypName ← getHypName proofstep.consequents[i]! true
-    evalTactic (← `(tactic| rcases $(mkIdent hypName):ident with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
+  | leftEx _ _ => do leftExRcases psName premisesProofstep proofstep
 
   | leftForall i t => do
     let hypName ← getHypName proofstep.antecedents[i]!
@@ -941,10 +984,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     assignMetaVars t
     evalSpecialize psName t
 
-  | rightForall i y => do
-    let hypName ← getHypName proofstep.consequents[i]! true
-    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
-
+  | rightForall _ _ => do leftExRcases psName premisesProofstep proofstep
   | rightRefl _ => do evalTactic (← `(tactic| contradiction))
 
   | rightSubstEq i backward P => do
@@ -1042,7 +1082,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     let hypName ← getHypName proofstep.antecedents[i]!
     trace[auto.tptp.printProof] "leftNotImplies: {hypName} {← resolveTypes proofstep.antecedents[i]!}"
     let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
-    evalTactic (← `(tactic| rcases (not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
+    evalTactic (← `(tactic| rcases (Classical.not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
 
   | leftNotIff i => do
     let hypName ← getHypName proofstep.antecedents[i]!
@@ -1062,9 +1102,7 @@ def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep)
     assignMetaVars t
     evalSpecialize psName t
 
-  | leftNotAll i y => do
-    let hypName ← getHypName proofstep.antecedents[i]!
-    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
+  | leftNotAll _ _ => do leftExRcases psName premisesProofstep proofstep
 
   -- Level 3
   | rightRelIff _ => do evalTactic (← `(tactic| trivial))
@@ -1263,6 +1301,7 @@ set_option trace.auto.tptp.printProof true
 set_option trace.auto.tptp.result true
 set_option trace.auto.lamReif.printValuation true
 
+set_option diagnostics true
 -- set_option pp.explicit true
 -- set_option pp.mvars true
 -- set_option pp.funBinderTypes true
@@ -1351,7 +1390,7 @@ example (α : Type) (f : α -> α) (a : α)
   egg
 
 -- issue here: `y` is not used, so related variables instantiated by the ATP have unknown type
-theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
+theorem saturation (α : Type) [Nonempty α] (sf : α -> α) (cemptySet : α)
   -- (h : ∃ y : Nat, y = y)
   (h1 : ∀ x, x = sf (sf (sf x)))
   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
@@ -1395,3 +1434,17 @@ example (α : Type) [Nonempty α] (f : α -> α) (a : α)
   (h2 : a =  f (f (f (f ( f a))))) :
   f a = a := by
   goeland
+
+example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
+  apply by_contradiction; intro goal
+  have f0 : ¬∃ eb!_0, ∀ (eb!_1 : α), d eb!_1 → d eb!_0 := by
+    apply by_contradiction; intro h
+    contradiction
+  have f3 := f0
+  rw [not_exists] at f3
+  have X05_9 : α := by
+    apply Classical.choice inferInstance
+  specialize f3 X05_9
+  rcases (Classical.not_forall.mp f3) with ⟨Sko_0, f4⟩
+  rcases (Classical.not_imp.mp f4) with ⟨f5_1, f5_2⟩
+  sorry

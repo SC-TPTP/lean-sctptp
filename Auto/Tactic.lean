@@ -1,4 +1,5 @@
 import Lean
+import Mathlib
 import Auto.Translation
 import Auto.Solver.SMT
 import Auto.Solver.TPTP
@@ -24,6 +25,8 @@ syntax defeqs := "d[" ident,* "]"
 syntax uord := atomic(unfolds) <|> defeqs
 syntax autoinstr := ("👍" <|> "👎")?
 syntax (name := auto) "auto" autoinstr hints (uord)* : tactic
+syntax (name := egg) "egg" autoinstr hints (uord)* : tactic
+syntax (name := goeland) "goeland" autoinstr hints (uord)* : tactic
 syntax (name := mononative) "mononative" hints (uord)* : tactic
 syntax (name := intromono) "intromono" hints (uord)* : tactic
 
@@ -261,7 +264,10 @@ def queryTPTP (exportFacts : Array REntry) : LamReif.ReifM (Option Expr × Optio
     match re with
     | .valid [] t => return t
     | _ => throwError "{decl_name%} :: Unexpected error")
-  let query ← lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
   trace[auto.tptp.printQuery] "\n{query}"
   let (proven, tptpProof) ← Solver.TPTP.querySolver query
   if !proven then
@@ -599,4 +605,793 @@ def evalMonoNative : Tactic
     absurd.assign proof
 | _ => throwUnsupportedSyntax
 
+
+
+/- #####################################
+  SC-TPTP related code
+##################################### -/
+
+set_option push_neg.use_distrib true
+
+/- A few lemmas for prenex normalization -/
+@[simp]
+theorem and_exists_prenex (p) (q : α → Prop) : p ∧ (∃ a, q a) ↔ ∃ a, p ∧ q a := by
+  apply Iff.intro
+  case mp =>
+    intro ⟨a, b, c⟩
+    exact ⟨b, a, c⟩
+  case mpr =>
+    intro ⟨a, b, c⟩
+    exact ⟨b, a, c⟩
+
+@[simp]
+theorem and_forall_prenex [Nonempty α] (p) (q : α → Prop) : p ∧ (∀ a, q a) ↔ ∀ a, p ∧ q a := by
+  apply Iff.intro
+  case mp =>
+    intro ⟨a, b⟩ c
+    exact ⟨a, b c⟩
+  case mpr =>
+    intro a
+    refine ⟨(a Classical.ofNonempty).1, ?_⟩
+    intro b
+    exact (a b).2
+
+@[simp]
+theorem exists_and_prenex (p) (q : α → Prop) : (∃ a, q a) ∧ p ↔ ∃ a, q a ∧ p := by
+  apply Iff.intro
+  · intro h
+    obtain ⟨⟨a, ha⟩, hp⟩ := h
+    exact ⟨a, ha, hp⟩
+  · intro h
+    obtain ⟨a, ha, hp⟩ := h
+    exact ⟨⟨a, ha⟩, hp⟩
+
+@[simp]
+theorem forall_and_prenex [Nonempty α] (p) (q : α → Prop) : (∀ a, q a) ∧ p ↔ ∀ a, q a ∧ p := by
+  apply Iff.intro
+  · intro h
+    intro a
+    obtain ⟨hq, hp⟩ := h
+    exact ⟨hq a, hp⟩
+  · intro h
+    apply And.intro
+    · intro a
+      obtain ⟨hqa, _⟩ := h a
+      exact hqa
+    · obtain ⟨_, hp⟩ := h (Classical.arbitrary α)
+      exact hp
+
+@[simp]
+theorem or_exists_prenex [Nonempty α] (p) (q : α → Prop) : p ∨ (∃ a, q a) ↔ ∃ a, p ∨ q a := by
+  apply Iff.intro
+  · intro h
+    match h with
+    | Or.inl hp =>
+      exact ⟨Classical.arbitrary α, Or.inl hp⟩
+    | Or.inr hex =>
+      obtain ⟨a, ha⟩ := hex
+      exact ⟨a, Or.inr ha⟩
+  · intro h
+    obtain ⟨a, ha⟩ := h
+    match ha with
+    | Or.inl hp => exact Or.inl hp
+    | Or.inr hqa => exact Or.inr ⟨a, hqa⟩
+
+@[simp]
+theorem or_forall_prenex (p) (q : α → Prop) : p ∨ (∀ a, q a) ↔ ∀ a, p ∨ q a := by
+  apply Iff.intro
+  · intro h
+    intro a
+    match h with
+    | Or.inl hp => exact Or.inl hp
+    | Or.inr hq => exact Or.inr (hq a)
+  · intro h
+    by_cases hp : p
+    · exact Or.inl hp
+    · apply Or.inr
+      intro a
+      match h a with
+      | Or.inl hp' => contradiction
+      | Or.inr hqa => exact hqa
+
+@[simp]
+theorem exists_or_prenex [Nonempty α] (p) (q : α → Prop) : (∃ a, q a) ∨ p ↔ ∃ a, q a ∨ p := by
+  apply Iff.intro
+  · intro h
+    match h with
+    | Or.inl hex =>
+      obtain ⟨a, ha⟩ := hex
+      exact ⟨a, Or.inl ha⟩
+    | Or.inr hp =>
+      exact ⟨Classical.arbitrary α, Or.inr hp⟩
+  · intro h
+    obtain ⟨a, ha⟩ := h
+    match ha with
+    | Or.inl hqa => exact Or.inl ⟨a, hqa⟩
+    | Or.inr hp => exact Or.inr hp
+
+@[simp]
+theorem forall_or_prenex (p) (q : α → Prop) : (∀ a, q a) ∨ p ↔ ∀ a, q a ∨ p := by
+  apply Iff.intro
+  · intro h
+    intro a
+    match h with
+    | Or.inl hq => exact Or.inl (hq a)
+    | Or.inr hp => exact Or.inr hp
+  · intro h
+    by_cases hp : p
+    · exact Or.inr hp
+    · apply Or.inl
+      intro a
+      match h a with
+      | Or.inl hqa => exact hqa
+      | Or.inr hp' => contradiction
+
+
+open Lean Elab Tactic Meta
+
+/--
+A helper that, given a name and an expression for the type (P), creates
+a new goal for proving P and adds a hypothesis (H : P) to the current goal.
+-/
+def haveExpr (hName : Name) (p : Expr) : TacticM Unit := do
+  -- current goal is G.
+  let currentMainGoal ← getMainGoal
+
+  -- Create a new goal to prove p.
+  let newGoal ← mkFreshExprMVar (.some p) (userName := hName)
+
+  -- Assert is essentially the Expr level of `have`.
+  let newMainGoal ← currentMainGoal.assert hName p newGoal
+  -- We then need to introduce the binding into the context.
+  let (_fvar, newMainGoal) ← newMainGoal.intro1P
+
+  -- set the goal to the `have` goal and the new main goal with the have introduced.
+  replaceMainGoal [newGoal.mvarId!, newMainGoal]
+
+-- Test the implementation of `haveExpr`
+example : True := by
+  run_tac do
+    haveExpr `Random (← elabTerm (← `(True)) .none)
+  · exact True.intro
+  · exact Random
+
+#check LocalContext
+def evalSpecialize (n : Name) (e : Expr) : TacticM Unit := withMainContext do
+  -- let (e, mvarIds') ← elabTermWithHoles e none `specialize (allowNaturalHoles := true)
+  let lctx ← getLCtx
+  let .some localDecl := lctx.findFromUserName? n
+    | throwError m!"{decl_name%} : Could not find {n} in context"
+  let applied := .app (.fvar localDecl.fvarId) e
+  let mvarId ← (← getMainGoal).assert localDecl.userName (← inferType applied).headBeta applied
+  let (_, mvarId) ← mvarId.intro1P
+  let mvarId ← mvarId.tryClear localDecl.fvarId
+  replaceMainGoal [mvarId]
+
+example : True := by
+  run_tac do
+    haveExpr `Random (← elabTerm (← `(True → True)) .none)
+  · exact fun _ => True.intro
+  · run_tac evalSpecialize `Random (← elabTerm (← `(True.intro)) .none)
+    exact Random
+
+def evalApply (e : Expr) : TacticM Unit := withMainContext do
+  liftMetaTactic fun g => do
+  let [newG] ← g.apply e
+    | throwError "{decl_name%} :: Too many arguments"
+  return [newG]
+
+def getHypExpr (n : Name) : TacticM Expr := withMainContext do
+  let lctx ← getLCtx
+  let .some localDecl := lctx.findFromUserName? n
+    | throwError m!"{decl_name%} : Could not find {n} in context {lctx.getFVars}"
+  return ← Parser.TPTP.resolveTypes localDecl.type
+
+def getHypDecl (e : Expr) (addNot : Bool := False) : TacticM LocalDecl := withMainContext do
+  let mut e ← Parser.TPTP.resolveTypes e
+  if addNot then
+    e := mkApp (mkConst ``Not) e
+  let lctx ← getLCtx
+  for decl in lctx do
+    let ty := decl.type
+    if ← isDefEq ty e then
+      return decl
+  throwError "Cannot find hypothesis for `{e}` (type: {← inferType e}) in context:\n{← getMainGoal}"
+
+def getHypName (e : Expr) (addNot : Bool := False) : TacticM Name := withMainContext do
+  getHypDecl e addNot >>= fun decl => return decl.userName
+
+def getHypFvar (e : Expr) (addNot : Bool := false) : TacticM FVarId := withMainContext do
+  getHypDecl e addNot >>= fun decl => return decl.fvarId
+
+open Parser.TPTP in
+def instMultImpl (args : List (String × Expr)) (proofstep : ProofStep) : TacticM Unit := withMainContext do
+  let hypDecls := (← proofstep.antecedents.mapM getHypDecl) ++ (← proofstep.consequents.mapM getHypDecl)
+  let funNames := args.map fun ⟨funNameStr, _⟩ => Name.str .anonymous funNameStr
+  let exprs ← args.mapM fun ⟨_, expr⟩ => do resolveTypes expr
+  let mut mvarId ← getMainGoal
+  -- branch cases: for expr with arity > 0, we need to do some `changeLocalDecl`
+  let argsPosArity := (exprs.zip funNames).filter fun (expr, _) =>
+    match expr with
+    | Expr.lam _ _ _ _ => true
+    | _ => false
+  if argsPosArity.length > 0 then
+    let funNamesPosArity := argsPosArity.map fun (_, funName) => funName
+    let exprsPosArity := argsPosArity.map fun (expr, _) => expr
+    for hypDecl in hypDecls do
+      let hypExpr ← resolveTypes hypDecl.type
+      let hypFvar := hypDecl.fvarId
+      mvarId ← MVarId.changeLocalDecl mvarId hypFvar
+                (hypExpr.replace (fun e =>
+                  match e with
+                  | Expr.const n _ => if funNamesPosArity.contains n then some exprsPosArity[funNamesPosArity.indexOf n]! else none
+                  | _ => none))
+  -- Then generalize
+  withMainContext do
+    for (expr, funName) in exprs.zip funNames do
+      let args : Array GeneralizeArg := (hypDecls.map (fun _ => ⟨expr, some funName, none⟩)).toArray
+      let hyps := (hypDecls.map (fun decl => decl.fvarId)).toArray
+      let mvarIdLoc ← getMainGoal
+      let (_, _, mvarIdLoc) ← mvarIdLoc.generalizeHyp args hyps
+      withMainContext do
+        replaceMainGoal [mvarIdLoc]
+
+/--
+  Setect metavariables that have not been yet assigned in (t : Expr), and assign them using Classical.choice
+-/
+def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
+  let mvars := (t.collectMVars {}).result
+  for mvarId in mvars do
+    let decl ← mvarId.getDecl
+    -- Check if metavariable is still unassigned
+    if (← mvarId.isAssignable) then
+      let type ← instantiateMVars decl.type
+      -- Assign the type to `Nat` if it is not assigned yet
+      let type := if !type.hasMVar then type else mkConst ``Nat
+      let currentMainGoal ← getMainGoal
+      let newMainGoal ← currentMainGoal.assert mvarId.name type (mkConst mvarId.name)
+      -- We then need to introduce the binding into the context.
+      let (_fvar, newMainGoal) ← newMainGoal.intro1P
+      replaceMainGoal [mvarId, newMainGoal]
+      try
+        evalTactic (← `(tactic| apply Classical.choice inferInstance))
+        trace[auto.tptp.printProof] "Assigned metavariable {mvarId} using `Classical.choice`"
+      catch e =>
+        throwError "{decl_name%} :: Failed to assign metavariable {mvarId} using `Classical.choice`, probably because of a missing `Nonempty` instance.\nError: {e.toMessageData}"
+
+open Parser.TPTP Parser.TPTP.InferenceRule in
+/-- Given a parsed and reified TPTP proofstep, dispatch to the corresponding Lean tactic(s). -/
+def applyProofStep (proofstep : ProofStep) (premisesProofstep : Array ProofStep) : TacticM Unit := withMainContext do
+  let psName := (.str .anonymous proofstep.name)
+
+  match proofstep.rule with
+  -- Level 1
+  | leftFalse _ => do evalTactic (← `(tactic| assumption))
+  | rightTrue _ => do evalTactic (← `(tactic| assumption))
+  | hyp _       => do evalTactic (← `(tactic| contradiction))
+  | leftWeaken _ => pure ()
+  | rightWeaken _ => pure ()
+
+  | cut i => do
+    let formula ← resolveTypes premisesProofstep[0]!.consequents[i]!
+    haveExpr psName formula
+    Meta.check (← (← getMainGoal).getType)
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
+
+  | leftAnd i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
+
+  | leftOr i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent psName):ident))
+
+  | leftImplies i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| rw [imp_iff_not_or] at $(mkIdent hypName):ident))
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident <;> rename_i $(mkIdent psName):ident))
+
+  | leftIff i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
+    evalTactic (← `(tactic| cases $(mkIdent hypName):ident; rename_i $(mkIdent hypName1):ident $(mkIdent hypName2):ident))
+
+  | leftNot _ => pure ()
+
+  | leftEx i y => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    evalTactic (← `(tactic| rcases $(mkIdent hypName):ident with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
+
+  | leftForall i t => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    trace[auto.tptp.printProof] "leftForall: {hypName}"
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    assignMetaVars t
+    evalSpecialize psName t
+
+  | rightAnd i => do
+    let hypName ← getHypName proofstep.antecedents[i]! true
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent hypName)) <;> rename_i $(mkIdent psName):ident))
+
+  | rightOr i => do
+    let hypName ← getHypName proofstep.antecedents[i]! true
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
+    evalTactic (← `(tactic| rcases (not_or.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
+
+  | rightImplies i => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
+    evalTactic (← `(tactic| rcases (Classical.not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1):ident, $(mkIdent hypName2)⟩))
+
+  | rightIff i => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    evalTactic (← `(tactic| have $(mkIdent psName):ident := $(mkIdent hypName):ident))
+    evalTactic (← `(tactic| rw [iff_iff_implies_and_implies] at $(mkIdent psName):ident))
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent psName)) <;> rename_i $(mkIdent psName):ident))
+
+  | rightNot i => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    evalTactic (← `(tactic| apply $(mkIdent hypName); intro $(mkIdent psName):ident))
+
+  | rightEx i t => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
+    assignMetaVars t
+    evalSpecialize psName t
+
+  | rightForall i y => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
+
+  | rightRefl _ => do evalTactic (← `(tactic| contradiction))
+
+  | rightSubstEq i backward P => do
+    let P ← resolveTypes P
+    let equality ← resolveTypes proofstep.antecedents[i]!
+    let (t, u) ← match equality with
+      | Expr.app (.app (.app (.const ``Eq _) _) t) u =>
+        if backward then pure (u, t) else pure (t, u)
+      | _ => throwError s!"rightSubstEq: cannot find equality in the antecedent form {equality}"
+    let P_u_hypName ← getHypName (P.app u) true
+    let eqHypName ← getHypName equality
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then getHypExpr eqHypNameSymm else pure equality
+      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, t, u, Expr.fvar (← getHypFvar equality)]
+      evalTactic (← `(tactic| apply $(mkIdent P_u_hypName)))
+      evalApply subst
+      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
+
+  | leftSubstEq i backward P => do
+    let P ← resolveTypes P
+    let equality ← resolveTypes proofstep.antecedents[i]!
+    let (t, u) ← match equality with
+      | Expr.app (.app (.app (.const ``Eq _) _) t) u =>
+        if backward then pure (u, t) else pure (t, u)
+      | _ => throwError s!"leftSubstEq: cannot find equality in the antecedent form {equality}"
+    let P_u_hypName ← getHypName (P.app u)
+    let eqHypName ← getHypName equality
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then pure equality else getHypExpr eqHypNameSymm
+      let subst ← Lean.Meta.mkAppOptM ``Eq.subst #[none, P, u, t, Expr.fvar (← getHypFvar equality)]
+      haveExpr psName (P.app t)
+      evalApply subst
+      evalTactic (← `(tactic| exact $(mkIdent P_u_hypName)))
+
+  | rightSubstIff i backward R => do
+    let R ← resolveTypes R
+    let equivalence ← resolveTypes proofstep.antecedents[i]!
+    let (phi, psi) ← match equivalence with
+      | Expr.app (.app (.const ``Iff _) phi) psi =>
+        if backward then pure (psi, phi) else pure (phi, psi)
+      | _ => throwError s!"rightSubstIff: cannot find equivalence in the antecedent form {equivalence}"
+    let R_psi_hypName ← getHypName (R.app psi) true
+    let eqHypName ← getHypName equivalence
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then getHypExpr eqHypNameSymm else pure equivalence
+      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[phi, psi, R, Expr.fvar (← getHypFvar equality)])
+      evalTactic (← `(tactic| apply $(mkIdent R_psi_hypName)))
+      evalApply subst
+      evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
+
+  | leftSubstIff i backward R => do
+    let R ← resolveTypes R
+    let equivalence ← resolveTypes proofstep.antecedents[i]!
+    let (phi, psi) ← match equivalence with
+      | Expr.app (.app (.const ``Iff _) phi) psi =>
+        if backward then pure (psi, phi) else pure (phi, psi)
+      | _ => throwError s!"leftSubstIff: cannot find equivalence in the antecedent form {equivalence}"
+    let R_psi_hypName ← getHypName (R.app psi)
+    let eqHypName ← getHypName equivalence
+    let eqHypNameSymm := Name.str eqHypName "symm"
+    evalTactic (← `(tactic| have $(mkIdent eqHypNameSymm) := $(mkIdent eqHypName).symm))
+    withMainContext do
+      let equality ← if backward then pure equivalence else getHypExpr eqHypNameSymm
+      let subst ← resolveTypes (← Lean.Meta.mkAppOptM ``Iff.subst #[psi, phi, R, Expr.fvar (← getHypFvar equality)])
+      haveExpr psName (R.app phi)
+      evalApply subst
+      evalTactic (← `(tactic| exact $(mkIdent R_psi_hypName)))
+
+  | instFun funNameStr expr => do instMultImpl [(funNameStr, expr)] proofstep
+  | instPred predNameStr expr => do instMultImpl [(predNameStr, expr)] proofstep
+
+  | rightEpsilon A X t => do evalTactic (← `(tactic| sorry))
+  | leftEpsilon i y => do evalTactic (← `(tactic| sorry))
+
+  -- Level 2
+  | congruence => do evalTactic (← `(tactic| cc))
+  | leftHyp _  => do evalTactic (← `(tactic| contradiction))
+
+  | leftNotAnd i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent hypName)) <;> rename_i $(mkIdent psName):ident))
+
+  | leftNotOr i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
+    evalTactic (← `(tactic| rcases (not_or.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
+
+  | leftNotImplies i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    trace[auto.tptp.printProof] "leftNotImplies: {hypName} {← resolveTypes proofstep.antecedents[i]!}"
+    let (hypName1, hypName2) := (Name.str psName "1", Name.str psName "2")
+    evalTactic (← `(tactic| rcases (not_imp.mp $(mkIdent hypName)) with ⟨$(mkIdent hypName1), $(mkIdent hypName2)⟩))
+
+  | leftNotIff i => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [iff_iff_implies_and_implies] at $(mkIdent psName):ident))
+    evalTactic (← `(tactic| cases (Classical.not_and_iff_or_not_not.mp $(mkIdent psName)) <;> rename_i $(mkIdent psName):ident))
+
+  | leftNotNot i =>
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [Classical.not_not] at $(mkIdent psName):ident))
+
+  | leftNotEx i t => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    evalTactic (← `(tactic| rw [not_exists] at $(mkIdent psName):ident))
+    assignMetaVars t
+    evalSpecialize psName t
+
+  | leftNotAll i y => do
+    let hypName ← getHypName proofstep.antecedents[i]!
+    evalTactic (← `(tactic| rcases (Classical.not_forall.mp $(mkIdent hypName)) with ⟨$(mkIdent (.str .anonymous y)), $(mkIdent psName)⟩))
+
+  -- Level 3
+  | rightRelIff _ => do evalTactic (← `(tactic| trivial))
+  | rightSubstMulti i P vars => do evalTactic (← `(tactic| sorry))
+  | leftSubstMulti i P vars => do evalTactic (← `(tactic| sorry))
+  | rightSubstEqForallLocal i R Z => do evalTactic (← `(tactic| sorry))
+  | rightSubstEqForall i R Z => do evalTactic (← `(tactic| sorry))
+  | rightSubstIffForallLocal i R Z => do evalTactic (← `(tactic| sorry))
+  | rightSubstIffForall i R Z => do evalTactic (← `(tactic| sorry))
+
+  | rightNnf i j => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    let targetExpr := mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[j]!
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    haveExpr psName targetExpr
+    evalTactic (← `(tactic| push_neg; push_neg at $(mkIdent psName):ident; assumption))
+
+  | rightPrenex i j => do
+    let hypName ← getHypName proofstep.consequents[i]! true
+    let targetExpr := mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[j]!
+    evalTactic (← `(tactic| have $(mkIdent psName) := $(mkIdent hypName)))
+    haveExpr psName targetExpr
+    try
+      evalTactic (← `(tactic| repeat (simp -failIfUnchanged only [imp_iff_not_or, and_forall_prenex, and_exists_prenex, exists_and_prenex, forall_and_prenex, or_forall_prenex, or_exists_prenex, exists_or_prenex, forall_or_prenex] at $(mkIdent psName):ident; try push_neg at $(mkIdent psName):ident)))
+      evalTactic (← `(tactic| repeat (simp -failIfUnchanged only [imp_iff_not_or, and_forall_prenex, and_exists_prenex, exists_and_prenex, forall_and_prenex, or_forall_prenex, or_exists_prenex, exists_or_prenex, forall_or_prenex]; try push_neg)))
+      evalTactic (← `(tactic| assumption))
+    catch e =>
+      throwError "Prenex normalization failed, you are probably missing a `Nonempty` instance. Error message:\n{e.toMessageData}"
+
+  | clausify _ => do evalTactic (← `(tactic| tauto))
+
+  | elimIffRefl i => do
+    let formula ← resolveTypes premisesProofstep[0]!.antecedents[i]!
+    haveExpr psName formula
+    Meta.check (← (← getMainGoal).getType)
+    evalTactic (← `(tactic| apply intros; apply Iff.refl))
+
+  | res i => do
+    let formula ← resolveTypes (mkApp (mkConst ``Not) premisesProofstep[0]!.consequents[i]!)
+    haveExpr psName formula
+    Meta.check (← (← getMainGoal).getType)
+    evalTactic (← `(tactic| apply Classical.byContradiction; intro $(mkIdent psName):ident))
+
+  | instMult args => do instMultImpl args proofstep
+
+
+
+partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
+  (proofStepNameToIndex : Std.HashMap String Nat)
+: TacticM Unit := do
+  if proofsteps.size != 0 then
+    let proofstep := proofsteps[proofsteps.size - 1]!
+    let premises := proofstep.premises.map (fun i => proofStepNameToIndex.get! i)
+    let premisesProofstep := premises.map (fun i => proofsteps[i]!)
+    trace[auto.tptp.printProof] "Current context:{← getMainGoal}"
+    trace[auto.tptp.printProof] "Proofstep:\n{proofstep}"
+    try
+      applyProofStep proofstep premisesProofstep.toArray
+    catch e =>
+      throwError "Error reconstructing proof at step {proofstep.name}: {e.toMessageData}"
+    for premise in premises do
+      reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
+
+def querySCTPTPSolver
+  (solverName : String) (querySolverFn : String → MetaM (Bool × Array Parser.TPTP.Command))
+  (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+  let lamVarTy := (← LamReif.getVarVal).map Prod.snd
+  let lamEVarTy ← LamReif.getLamEVarTy
+  let exportLamTerms ← exportFacts.mapM (fun re => do
+    match re with
+    | .valid [] t => return t
+    | _ => throwError "{decl_name%} :: Unexpected error")
+  let query ← if (auto.mono.mode.get (← getOptions)) == MonoMode.fol then
+    lam2FOF lamVarTy lamEVarTy exportLamTerms
+  else
+    lam2TH0 lamVarTy lamEVarTy exportLamTerms
+  trace[auto.tptp.printQuery] "\n{query}"
+  let (proven, tptpProof) ← querySolverFn query
+  if proven then
+    try
+      let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
+      return proofSteps
+    catch e =>
+      throwError "{solverName} found a proof, but proof reification failed with {e.toMessageData}"
+  else
+    throwError "{solverName} failed to find proof"
+
+/--
+  Run `auto`'s monomorphization and preprocessing, then send the problem to the SC-TPTP solver
+-/
+def runSCTPTPSolver
+  (solverName : String)
+  (querySolver : Array Embedding.Lam.REntry → LamReif.ReifM (Array Parser.TPTP.ProofStep))
+  (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  withDefault do
+    traceLemmas `auto.runAuto.printLemmas s!"All lemmas received by {solverName}:" lemmas
+    let lemmas ← rewriteIteCondDecide lemmas
+    let (proofsteps, _) ← Monomorphization.monomorphize lemmas inhFacts (@id (Reif.ReifM (Array Parser.TPTP.ProofStep)) do
+      let s ← get
+      let u ← computeMaxLevel s.facts
+      (reifMAction s.facts s.inhTys s.inds querySolver).run' {u := u})
+    return proofsteps
+where
+  reifMAction
+    (uvalids : Array UMonoFact) (uinhs : Array UMonoFact)
+    (minds : Array (Array SimpleIndVal))
+    (querySolver : Array Embedding.Lam.REntry → LamReif.ReifM (Array Parser.TPTP.ProofStep))
+    : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
+    let exportFacts ← LamReif.reifFacts uvalids
+    let exportFacts := exportFacts.map (Embedding.Lam.REntry.valid [])
+    let _ ← LamReif.reifInhabitations uinhs
+    LamReif.printValuation
+    -- **TPTP invocation and Premise Selection**
+    if auto.tptp.get (← getOptions) then
+      let proofsteps ← querySolver exportFacts
+      return proofsteps
+    throwError "auto.tptp is not enabled"
+
+
+def evalSCTPTPSolverTactic
+  (solverName : String)
+  (runSolver : Array Lemma → Array Lemma → MetaM (Array Parser.TPTP.ProofStep))
+  (instr : Instruction) (hints : TSyntax ``hints) (uords : Array (TSyntax `Auto.uord)) : TacticM Unit :=
+withMainContext do
+  let goal ← getMainGoal
+  let currentGoalName := `_currentGoalName
+  liftMetaTactic fun g => do
+    let [newG] ← g.apply (.const ``Classical.byContradiction [])
+      | throwError "{decl_name%} :: Too many arguments"
+    let newG ← newG.introN 1 [currentGoalName]
+    return [newG.2]
+
+  match instr with
+  | .none => withMainContext do
+    let (lemmas, inhFacts) ← collectAllLemmas hints uords #[FVarId.mk `_currentGoalName]
+    let proofsteps ← runSolver lemmas inhFacts
+
+    try
+      let mut proofStepNameToIndex : Std.HashMap String Nat := Std.HashMap.empty
+      for (proofstep, i) in proofsteps.zipWithIndex do
+        proofStepNameToIndex := proofStepNameToIndex.insert proofstep.name i
+      trace[auto.tptp.printProof] "###########################################"
+      trace[auto.tptp.printProof] "Proof steps (backward):"
+      reconstructProof proofsteps proofStepNameToIndex
+    catch e =>
+      throwError "{solverName} found a proof, but reconstruction failed with:\n{e.toMessageData}"
+
+    -- TODO: handle unassigned metavariables
+
+  | .useSorry =>
+    let proof ← mkAppM ``sorryAx #[Expr.const ``False [], Expr.const ``false []]
+    goal.assign proof
+
+
+/-- Query the Egg solver with the given facts -/
+def querySCTPTPEgg (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) :=
+  querySCTPTPSolver "Egg" Solver.TPTP.queryEggSolver exportFacts
+
+/-- Run `auto`'s monomorphization and preprocessing, then send the problem to Egg solver -/
+def runEgg (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  runSCTPTPSolver "runEgg" querySCTPTPEgg lemmas inhFacts
+
+@[tactic egg]
+def evalEgg : Tactic
+| `(egg | egg $instr $hints $[$uords]*) => do
+  let parsedInstr ← parseInstr instr
+  evalSCTPTPSolverTactic "Egg" runEgg parsedInstr hints uords
+| _ => throwUnsupportedSyntax
+
+
+/-- Query the Goeland solver with the given facts -/
+def queryscTPTPGoeland (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) :=
+  querySCTPTPSolver "Goeland" Solver.TPTP.queryGoelandSolver exportFacts
+
+/-- Run `auto`'s monomorphization and preprocessing, then send the problem to Goeland solver -/
+def runGoeland (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  runSCTPTPSolver "runGoeland" queryscTPTPGoeland lemmas inhFacts
+
+@[tactic goeland]
+def evalGoeland : Tactic
+| `(goeland | goeland $instr $hints $[$uords]*) => do
+  let parsedInstr ← parseInstr instr
+  evalSCTPTPSolverTactic "Goeland" runGoeland parsedInstr hints uords
+| _ => throwUnsupportedSyntax
+
 end Auto
+
+
+set_option auto.tptp true
+set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
+set_option auto.tptp.goeland.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/goeland_linux_release"
+set_option auto.mono.mode "fol"
+
+set_option trace.auto.tptp.printQuery true
+set_option trace.auto.tptp.printProof true
+set_option trace.auto.tptp.result true
+set_option trace.auto.lamReif.printValuation true
+
+-- set_option pp.explicit true
+-- set_option pp.mvars true
+-- set_option pp.funBinderTypes true
+-- set_option pp.all true
+-- set_option pp.piBinderTypes true
+-- set_option pp.letVarTypes true
+-- set_option pp.mvars.withType true
+
+-- # Known issues
+-- Shadowing hypothesis names
+  -- example (α : Type) (a b : α)
+  --   (h : ∀ y : α, y = a)
+  --   (h : ∀ y : Nat, y = y) :
+  --   a = b := by
+  --   egg
+
+-- Exporting hypotheses not suppported by the solver
+  -- example (α : Type) (a b : α)
+  --   (h : ∀ y : α, y = a)
+  --   (h : ∃ y : Nat, y = y) :
+  --   a = b := by
+  --   egg
+
+-- Useless variable create placeholder synthesis issue
+  -- example (α : Type) (sf : α -> α) (cemptySet : α)
+  --   (h1 : ∀ x, x = sf (sf (sf x)))
+  --   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
+  --   cemptySet = sf cemptySet := by
+  --   egg
+
+example : A ↔ A := by
+  egg
+
+example : A = A := by
+  egg
+
+example (α : Type) (a b : α)
+  (h1 : a = b) :
+  a = b := by
+  egg
+
+example (α : Type) (a b : α)
+  (h1 : a = b) :
+  b = a := by
+  egg
+
+example (α : Type) (a b : α)
+  (h : ∀ y : α, y = a) :
+  a = b := by
+  egg
+
+example (α : Type) (a b c d e : α)
+  (h1 : a = b)
+  (h2 : b = c)
+  (h3 : c = d)
+  (h4 : d = e) :
+  a = e := by
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : a = (fun x => f x) a) :
+  a = f a := by
+  egg
+
+example (f : Prop -> Prop) (a : Prop)
+  (h1 : a ↔ (fun x => f x) a) :
+  a ↔ f a := by
+  egg
+
+example (f : Prop -> Prop) (a : Prop)
+  (h1 : a ↔ (fun x => f x) a) :
+  f a ↔ a := by
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  a = f a := by
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  -- (h : ∃ y : Nat, y = y)
+  (h1 : ∀ x, (f (f (f ( f x)))) = x)
+  (h2 : a =  f (f (f (f ( f a))))) :
+  a = f a := by
+  egg
+
+-- issue here: `y` is not used, so related variables instantiated by the ATP have unknown type
+theorem saturation (α : Type) (sf : α -> α) (cemptySet : α)
+  -- (h : ∃ y : Nat, y = y)
+  (h1 : ∀ x, x = sf (sf (sf x)))
+  (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
+  cemptySet = sf cemptySet := by
+  egg
+
+theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
+  (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
+  (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
+  p (sf cemptySet) ↔ p cemptySet := by
+  egg
+
+example (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
+  (h1 : ∀ x, p x = p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
+  (h2 : ∀ x, p x = p (sf (sf (sf (sf (sf x)))))) :
+  p (sf cemptySet) = p cemptySet := by
+  egg
+
+example (α : Type) (sf : α -> α)
+  (h1 : ∀ x, x = sf (sf (sf x)))
+  (h2 : ∀ x, x = sf (sf x)) :
+  ∀ x, x = sf x := by
+  intro x
+  egg
+
+example (α : Type) (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  f a = a := by
+  egg
+
+-- issue here: we have two different variables `Sko_0` ^^'
+example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
+  goeland
+
+theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
+  goeland
+
+example (α : Type) [Nonempty α] (f : α -> α) (a : α)
+  (h1 : ∀ x, x = (f (f (f ( f x)))))
+  (h2 : a =  f (f (f (f ( f a))))) :
+  f a = a := by
+  goeland

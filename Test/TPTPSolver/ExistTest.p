@@ -1,1 +1,0 @@
-thf(fact0, axiom, ((~) @ (((^ [L : ((s_nat > $o) > $o), R : ((s_nat > $o) > $o)] : L = R) @ (^ [EPF : (s_nat > $o)] : ? [EPX : s_nat] : (EPF @ EPX))) @ (^ [EPF : (s_nat > $o)] : ? [EPX : s_nat] : (EPF @ EPX))))).

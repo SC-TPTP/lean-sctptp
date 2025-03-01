@@ -1,5 +1,6 @@
 import Lean
 import Auto.IR.TPTP_TH0
+import Auto.IR.TPTP_FOF
 import Auto.Parser.TPTP
 import Auto.Embedding.LamBase
 open Lean
@@ -103,6 +104,16 @@ register_option auto.tptp.vampire.path : String := {
   descr := "Path to vampire prover"
 }
 
+register_option auto.tptp.egg.path : String := {
+  defValue := "egg"
+  descr := "Path to egg prover"
+}
+
+register_option auto.tptp.goeland.path : String := {
+  defValue := "goeland"
+  descr := "Path to goeland prover"
+}
+
 namespace Auto.Solver.TPTP
 
 abbrev SolverProc := IO.Process.Child ⟨.piped, .piped, .piped⟩
@@ -195,6 +206,62 @@ def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := 
     | .eproverHo      => queryE query
     | .vampire        => queryVampire query)
   return (proven, ← Parser.TPTP.parse stdout)
+
+def queryEggSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
+  let path := auto.tptp.egg.path.get (← getOptions)
+  -- Hash the query to create unique file names
+  let queryHash := toString <| hash query
+  let problemFile := s!"./.egg_problem_{queryHash}.p"
+  let solutionFile := s!"./.egg_problem_sol_{queryHash}.p"
+
+  IO.FS.withFile problemFile .writeNew (fun stream => stream.putStr (query ++ "\n"))
+  IO.FS.withFile solutionFile .writeNew (fun stream => stream.putStr "")
+
+  let solver ← createAux path #["--level1", problemFile, solutionFile]
+  let stdout ← solver.stdout.readToEnd
+  let stderr ← solver.stderr.readToEnd
+  solver.kill
+
+  let proven := (stdout == "" ∧ stderr == "")
+  let proof ← IO.FS.readFile solutionFile
+
+  IO.FS.removeFile problemFile
+  IO.FS.removeFile solutionFile
+
+  if proven then
+    trace[auto.tptp.result] "Proof: \n{proof}"
+  else
+    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
+
+  return (proven, ← Parser.TPTP.parse proof)
+
+def queryGoelandSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
+  let path := auto.tptp.goeland.path.get (← getOptions)
+  -- Hash the query to create unique file names
+  let queryHash := toString <| hash query
+  let problemFile := s!"./.goeland_problem_{queryHash}.p"
+  let solutionFile := s!"./.goeland_problem_sol_{queryHash}.p"
+
+  IO.FS.withFile problemFile .writeNew (fun stream => stream.putStr (query ++ "\n"))
+  IO.FS.withFile solutionFile .writeNew (fun stream => stream.putStr "")
+
+  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", s!"-proof_file=./.goeland_problem_sol_{queryHash}", problemFile]
+  let stdout ← solver.stdout.readToEnd
+  let stderr ← solver.stderr.readToEnd
+  solver.kill
+
+  let proof ← IO.FS.readFile solutionFile
+  let proven := (stderr == "" ∧ proof != "")
+
+  IO.FS.removeFile problemFile
+  IO.FS.removeFile solutionFile
+
+  if proven then
+    trace[auto.tptp.result] "Proof: \n{proof}"
+  else
+    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}\nproof:\n{proof}"
+
+  return (proven, ← Parser.TPTP.parse proof)
 
 end Solver.TPTP
 

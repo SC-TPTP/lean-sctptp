@@ -3,3 +3,7 @@
 /.zeport_ignore
 /lakefile.olean
 /.lake
+/logs
+
+# Prover9
+/p9proof

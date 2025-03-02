@@ -1,105 +1,34 @@
-<p align="center">
-  <img src="Doc/pics/Logo.bmp" width="600" />
-</p>
-  
-Lean-auto is an interface between Lean and automated theorem provers. Up to now, lean-auto is maintained and developed primarily by Yicheng Qian (GitHub: PratherConid). It is currently in active development, and pull requests/issues are welcome. For more information, feel free to reach out to Yicheng Qian on [Lean Zulip](https://leanprover.zulipchat.com).  
-  
-Lean-auto is based on a monomorphization procedure from dependent type theory to higher-order logic and a deep embedding of higher-order logic into dependent type theory. It is capable of handling dependently-typed and/or universe-polymorphic input terms. Currently, proof reconstruction can be handled by [Duper](https://github.com/leanprover-community/duper), a higher-order superposition prover written in Lean. To enable Duper, please import the duper repo in your project, and set the following options:
-```lean
-import Auto.Tactic
-import Duper.Tactic
+# Lean SC-TPTP
 
-open Lean Auto in
-def Auto.duperRaw (lemmas : Array Lemma) (inhs : Array Lemma) : MetaM Expr := do
-  let lemmas : Array (Expr × Expr × Array Name × Bool) ← lemmas.mapM
-    (fun ⟨⟨proof, ty, _⟩, _⟩ => do return (ty, ← Meta.mkAppM ``eq_true #[proof], #[], true))
-  Duper.runDuper lemmas.toList 0
+Lean SC-TPTP brings a new interface between Lean 4 and automated theorem provers following the SC-TPTP format. In particular, Lean SC-TPTP introduces tactics doing proof reconstruction end-to-end by performing the following steps:
 
-attribute [rebind Auto.Native.solverFunc] Auto.duperRaw
-set_option auto.native true
-```
-    
-Although Lean-auto is still under development, it's already able to solve nontrivial problems. For example the first part of the "snake lemma" in category theory can be solved by a direct invocation to ``auto`` (and the second part can also be partly automated):
+- **Monomorphize the problem:** All dependently-typed/universe-polymorphic problems are monomorphized.
+- **Translate to TPTP FOF:** The monomorphized problem is converted into the TPTP FOF (first-order) format.
+- **Run the solver:** The tactic invokes either the Egg or Goeland solver on the translated problem.
+- **Obtain the SC-TPTP proof:** The resulting proof is returned in the SC-TPTP format.
+- **Parse and reify:** The proof is parsed, reified, and then reconstructed in Lean 4 using Lean’s built-in tactics.
 
-<p align="center">
-  <img src="Doc/pics/shortfive.png" alt="drawing" width="500"/>
-</p>
-
-Type **"auto 👍"** to see whether auto is set up.  
+This codebase builds upon the [Lean Auto](https://github.com/leanprover/lean-auto) work. In particular, you may refer to the second part of the [Tactic.lean](Auto/Tactic.lean) file along with [TPTP.lean](Auto/Parser/TPTP.lean) and [TPTP_FOF.lean](Auto/IR/TPTP_FOF.lean) for more detailed insights on solver integrations and proof reconstruction.
 
 ## Usage
-* ``auto [<term>,*] u[<ident>,*] d[<ident>,*]``
-  * ``u[<ident>,*]``: Unfold identifiers
-  * ``d[<ident>,*]``: Add definitional equality related to identifiers
-* Currently, auto supports
-  * SMT solver invocation: ``set_option auto.smt true``, but without proof reconstruction. Make sure that SMT solvers are installed, and that ``auto.smt.solver.name`` is correctly set.
-  * TPTP Solver invocation: ``set_option auto.tptp true``, but without proof reconstruction. Make sure that TPTP solvers (currently only supports zipperposition) are installed, and that ``auto.tptp.solver.name`` and ``auto.tptp.zeport.path`` are correctly set.
-  * Proof search by native prover. To enable proof search by native prover, use ``set_option auto.native true``, and use ``attribute [rebind Auto.Native.solverFunc] <solve_interface>`` to bind `lean-auto` to the interface of the solver, which should be a Lean constant of type ``Array Lemma → MetaM Expr``.
 
-## Installing Lean-auto
-* ``z3`` version >= 4.12.2. Lower versions may not be able to deal with smt-lib 2.6 string escape sequence.
-* ``cvc5``
-* ``zipperposition`` portfolio mode
+At the moment, three solvers are available: `Egg`, `Goeland`, and `Prover9` through the `egg`, `goeland`, and `prover9` tactics, respectively. To use these new tactics, simply set the following desired options:
 
-## Utilities
-* Command ```#getExprAndApply [ <term> | <ident> ]```: Defined in ```ExprExtra.lean```. This command first elaborates the ```<term>``` into a lean ```Expr```, then applies function ```<ident>``` to ```Expr```. The constant ```ident``` must be already declared and be of type ```Expr → TermElabM Unit```
-* Command ```#genMonadState <term>, #genMonadContext <term>```: Defined in ```MonadUtils.lean```. Refer to the comment at the beginning of ```MonadUtils.lean```.
-* Command ```#fromMetaTactic [<ident>]```: Calls ```Tactic.liftMetaTactic``` on ```<ident>```. The constant ```<ident>``` must be already declared and be of type ```MVarId → MetaM (List MVarId)```
-* Lexical Analyzer Generator: ```Parser/LeanLex.lean```. The frontend is not yet implemented. The backend can be found in ```NDFA.lean```.
+- `set_option auto.tptp true`
+- `set_option auto.mono.mode "fol"`
+- `set_option auto.tptp.egg.path "/path/to/egg-sc-tptp"`
+- `set_option auto.tptp.goeland.path "/path/to/goeland-sc-tptp"`
+- `set_option auto.tptp.prover9.path "/path/to/prover9-sc-tptp"`
 
-## Monomorphization Strategy
-* Let $H : \alpha$ be an assumption. We require that
-  * $(1)$ If the type $\beta$ of any subterm $t$ of $\alpha$ depends on a bound variable $x$ inside $\alpha$, and $\beta$ is not of type $Prop$, then $x$ must be instantiated. Examples: [Monomorphization](./Doc/Monomorphization.lean), section `InstExamples`
-  * $(2)$ If any binder $x$ of $\alpha$ has binderinfo `instImplicit`, then the binder $x$ must be instantiated via typeclass inference.
-* **TODO**
+and invoke either `egg`, `goeland`, or `prover9` in your proofs. The tactics will perform all the steps mentioned above. Examples are available at the end of the [Tactic.lean](Auto/Tactic.lean) file.
 
-## Translation Workflow (Tentative)
-* Collecting assumptions from local context and user-provided facts
-  * We reduce ```let``` binders and unfold projections when we collect assumptions. So, in the following discussion, we'll assume that the expression contains no ```let``` binders and no ```proj```s.
-  * We also $\beta$ reduce user provided facts so that there are nothing like $(\lambda x. t_1) \ t_2$
-* $CIC \to COC$: Collecting constructors and recursors for inductive types (effectively, not directly)
-  * e.g collecting equational theorem for *match* constructs
-  * e.g collect constructors for inductively defined propositions
-* $COC \to COC(\lambda^{c.u.})$: Monomorphization
-  * Monomorphize all (dependently typed/universe polymorphic) facts to higher-order universe-monomorphic facts
-  * $c.u.$ stands for "constant universe level"
-  * Note that at this stage, all the facts we've obtained are still valid $CIC$ expressions and has convenient CIC proofs from the assumptions.
-* $COC(\lambda^{c.u.}) \to COC(\lambda)$
-  * We want all types $α$ occuring in the signature of constants and variables to be of sort ```Type (u + 1)```, i.e., $α : Type \ (u + 1)$. This is necessary because we want to write a checker (instead of directly reconstructing proof in DTT) and the valuation function from less expressive logic to dependent type theory requires [the elements in the range of the valuation function] to be [of the same sort].
-  * To do this, we use ```GLift```. For example, ```Nat.add``` is transformed into ```Nat.addLift```
-    ```lean
-    structure GLift.{u, v} (α : Sort u) : Sort (max u (v + 1)) where
-      /-- Lift a value into `GLift α` -/    up ::
-      /-- Extract a value from `GLift α` -/ down : α
+Adding new solvers is straightforward as long as they support the SC-TPTP format. Simply add a method to execute the solver in the [TPTP.lean](Auto/Solver/TPTP.lean) file, then add a new tactic using this method at the end of the [Tactic.lean](Auto/Tactic.lean) file.  You can use the existing implemented tactics as templates.
 
-    def Nat.addLift.{u} (x y : GLift.{1, u} Nat) :=
-      GLift.up (Nat.add (GLift.down x) (GLift.down y))
-    ```
-  * We only transfer these "lifted" terms to the less expressive $\lambda_2$, and $\lambda_2$ is unaware of the universe levels wrapped inside ```GLift.up```.
-  * Lifted constantes should be introduced into the local context. Theorems corresponding to the original one but using only lifted constants and with uniform universe levels, should also be introduced into the local context. Later translations should only use theorems and constants with uniform universe levels.
-* $\lambda \to \lambda(\text{TPTP TF0})$: Instantiating function arguments
-  * $\lambda$ is the reified $COC(\lambda)$
-* **There should also be a process similar to ULifting that "lifts" Bool into Prop, Nat to Int**
+## Requirements
 
-## Reification
-* $COC(\lambda) \to \lambda(\text{TPTP\ TH0})$
-  * ```Auto/Translation/LamReif.lean```
-* $\lambda(\text{TPTP TF0}) \to \text{TPTP TF0}$
-  * ```Auto/Translation/LamFOL2SMT.lean```
+- Lean 4
+- Executables for the corresponding solvers with SC-TPTP support.
 
-## Checker
-* The checker is based on a deep embedding of simply-typed lambda calculus into dependent type theory.
-* The checker is slow on large input. For example, it takes ```6s``` to typecheck the final example in ```BinderComplexity.lean```. However, this is probably acceptable for mathlib usages, because e.g ```Mathlib/Analysis/BoxIntegral/DivergenceTheorem.lean``` has two theorems that take ```4s``` to compile (but a large portion of the ```4s``` are spent on typeclass inference)
+## Acknowledgements
 
-## Rules in Proof Tree
-* `defeq <num> <name>`: The `<num>`-th definitional equality associated with definition `<name>`
-* `hw <name>`: Lemmas hard-wired into Lean-auto
-* `lctxInh`: Inhabitation fact from local context
-* `lctxLem`: Lemma from local context
-* `rec <indName>.<ctorName>`
-* `rw [0, 1]`: Rewrite `0` using `1` (`1` must be an equality)
-* `tyCanInh`: Inhabitation instance synthesized for canonicalized type
-* `ciInstDefEq`: Definitional equality resulting from instance relations between ``ConstInst``s
-* `termLikeDefEq`: Definitional equality resulting from definitional equalities between term-like subexpressions
-* `❰<term>❱`: User-provided lemma `<term>`
-* `queryNative::<func_name>`: Proved by native prover
+Lean SC-TPTP builds upon the pioneering work of Lean Auto. Contributions and suggestions are welcome!

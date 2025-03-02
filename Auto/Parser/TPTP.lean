@@ -31,6 +31,8 @@ instance : ToString Token where
   toString := Token.toString
 
 structure State where
+  input     : String
+  pos       : Nat := 0
   status    : Status := .default
   currToken : String := ""
   res       : Array Token := #[]
@@ -92,13 +94,32 @@ def finalizeToken : TokenizerM Unit := do
     | .comment => throw $ IO.userError s!"TPTP.parse.finalizeToken :: Cannot finalize comment"
     setStatus .default
 
-def tokenizeAux (str : String) : TokenizerM Unit := do
-  for char in str.data do
+def peek? : TokenizerM (Option Char) := do
+  let st ← get
+  if st.pos < st.input.length then
+    return some (st.input.get ⟨st.pos⟩)
+  else
+    return none
+
+def tokenizeAux : TokenizerM Unit := do
+  let st ← get
+  let input := st.input
+  while (← get).pos < input.length do
+    let st ← get
+    let char := input.get ⟨st.pos⟩
+    modify (fun st => { st with pos := st.pos + 1 })
     match ← getStatus with
     | .default =>
       if char.isWhitespace then
         finalizeToken
       else if char.isAlphanum || char == '$' then
+        finalizeToken
+        setStatus .ident
+        addToCurrToken char
+      else if (char == '-' || char == '+') &&
+              match (← peek?) with
+              | some c => c.isDigit
+              | none => false then
         finalizeToken
         setStatus .ident
         addToCurrToken char
@@ -134,7 +155,9 @@ def tokenizeAux (str : String) : TokenizerM Unit := do
   finalizeToken
 
   def tokenize (s : String) : IO (Array Token) := do
-    return (← (tokenizeAux s).run {}).2.res
+    let initialState : State := { input := s, pos := 0, status := .default, currToken := "", res := #[] }
+    let result ← tokenizeAux.run initialState
+    return result.2.res
 
 end Tokenizer
 
@@ -1527,5 +1550,7 @@ fof(c, conjecture, (t_a1 = app(t_a0, t_a1)))."
 #eval parse "fof(f1, plain, [q(b)] --> [], inference(instFun, [status(thm), 'X', $fot(b), []], [a1]))."
 
 #eval parse "fof(f8, plain, [~((? [X05] : ((app(t_a0, X05) => (! [X17] : (app(t_a0, X17))))))), ~((app(t_a0, X05_9) => (! [X17] : (app(t_a0, X17))))), app(t_a0, X05_9), ~((! [X17] : (app(t_a0, X17)))), ~(app(t_a0, Sko_0)), ~((app(t_a0, Sko_0) => (! [X17] : (app(t_a0, X17))))), app(t_a0, Sko_0)] --> [], inference(leftHyp, [status(thm), 4], []))."
+
+#eval parse "fof(-8, plain, [~((? [X05] : ((app(t_a0, X05) => (! [X17] : (app(t_a0, X17))))))), ~((app(t_a0, X05_9) => (! [X17] : (app(t_a0, X17))))), app(t_a0, X05_9), ~((! [X17] : (app(t_a0, X17)))), ~(app(t_a0, Sko_0)), ~((app(t_a0, Sko_0) => (! [X17] : (app(t_a0, X17))))), app(t_a0, Sko_0)] --> [], inference(leftHyp, [status(thm), 4], []))."
 
 end TPTP

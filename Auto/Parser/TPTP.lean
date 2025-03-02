@@ -1056,9 +1056,10 @@ where
       | .func argTy resTy =>
         match argTy.beq s₂ with
         | true => lamConstrMkAppN (.term resTy (.app s₂ t₁ t₂)) tail
-        | false => .error s!"term2LamTermSCTPTP :: Application type ({s₁} applied to {s₂}) mismatch in lamConstrMkAppN, `{head}` `{args}`"
-      | _ => .error s!"term2LamTermSCTPTP :: Non-function head `{head}` applied to argument"
-    | _, _ => .error s!"term2LamTermSCTPTP :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
+        | false => .error s!"{decl_name%} :: Application type ({s₁} applied to {s₂}) mismatch in lamConstrMkAppN, `{head}` `{args}`"
+      | .base .int => lamConstrMkAppN (.term (.base .int) (.app s₂ t₁ t₂)) tail
+      | _ => .error s!"{decl_name%} :: Non-function head `{head}` applied to argument"
+    | _, _ => .error s!"{decl_name%} :: Unexpected input `{head}`, `{args}` to lamConstrMkAppN"
 
 
 def resolveTypes (e : Expr) : MetaM Expr := do
@@ -1200,18 +1201,18 @@ def parseBool (pt : Term) : Bool :=
   match pt with
   | Term.mk (Token.ident s) _ =>
     match s with
-    | "true" => true
-    | "false" => false
-    | _   => panic! "{decl_name%}: not a valid boolean"
-  | _ => panic! "{decl_name%}: unexpected term format"
+    | "true" | "1" => true
+    | "false" | "0" => false
+    | _   => panic! s!"{decl_name%}: not a valid boolean: `{s}`"
+  | _ => panic! s!"{decl_name%}: unexpected term format"
 
 def parseNat (pt : Term) : Nat :=
   match pt with
   | Term.mk (Token.ident s) _ =>
     match s.toNat? with
     | some n => n
-    | none   => panic! "{decl_name%}: not a valid numeral"
-  | _ => panic! "{decl_name%}: unexpected term format"
+    | none   => panic! s!"{decl_name%}: not a valid numeral: `{s}`"
+  | _ => panic! s!"{decl_name%}: unexpected term format"
 
 def parseListNat (pt : Term) : List Nat :=
   match pt with
@@ -1221,18 +1222,18 @@ def parseListNat (pt : Term) : List Nat :=
       | Term.mk (Token.ident s) _ =>
         match s.toNat? with
         | some n => n
-        | none   => panic! s!"{decl_name%}: not a valid numeral: {s}"
-      | _ => panic! s!"{decl_name%}: unexpected term format: {arg}"
+        | none   => panic! s!"{decl_name%}: not a valid numeral: `{s}`"
+      | _ => panic! s!"{decl_name%}: unexpected term format: `{arg}`"
   | Term.mk (Token.ident s) _ =>
     match s.toNat? with
     | some n => [n]
-    | none   => panic! s!"{decl_name%}: not a valid numeral: {s}"
-  | _ => panic! s!"{decl_name%}: unexpected term format: {pt}"
+    | none   => panic! s!"{decl_name%}: not a valid numeral: `{s}`"
+  | _ => panic! s!"{decl_name%}: unexpected term format: `{pt}`"
 
 def parseParamString (pt : Term) : String :=
   match pt with
   | Term.mk (Token.ident s) _ => s
-  | _ => panic! "{decl_name%}: unexpected term format"
+  | _ => panic! s!"{decl_name%}: unexpected term format: `{pt}`"
 
 def parseListString (pt : Term) : List String :=
   match pt with
@@ -1240,9 +1241,9 @@ def parseListString (pt : Term) : List String :=
     args.map fun arg =>
       match arg with
       | Term.mk (Token.ident s) _ => s
-      | _ => panic! s!"{decl_name%}: unexpected term format: {arg}"
+      | _ => panic! s!"{decl_name%}: unexpected term format: `{arg}`"
   | Term.mk (Token.ident s) _ => [s]
-  | _ => panic! s!"{decl_name%}: unexpected term format: {pt}"
+  | _ => panic! s!"{decl_name%}: unexpected term format: `{pt}`"
 
 structure InferenceRecord where
   rule      : InferenceRule
@@ -1277,18 +1278,15 @@ partial def updateLetBindings (pi : ParsingInfo) (t : Term) : LamReif.ReifM Term
 -/
 partial def updateVars (pi : ParsingInfo) (t : Term) : LamReif.ReifM ParsingInfo := do
   match t with
-  | ⟨.ident s, []⟩ =>
+  | ⟨.ident "app", args⟩ => args.foldlM (init := pi) fun pi arg => updateVars pi arg
+  | ⟨.ident s, args⟩ =>
     trace[auto.tptp.printProof] s!"Checking variable {s}"
     match ident2LamConstr pi s with
     | .error _ =>
       trace[auto.tptp.printProof] s!"Adding new variable {s}"
-      pi.addSkolem s (.base .int)
-    | _ => pure pi
-  | ⟨_, args⟩ =>
-    let mut pi := pi
-    for arg in args do
-      pi := (← updateVars pi arg)
-    pure pi
+      args.foldlM (init := (← pi.addSkolem s (.base .int))) fun pi arg => updateVars pi arg
+    | _ => args.foldlM (init := pi) fun pi arg => updateVars pi arg
+  | ⟨_, args⟩ => args.foldlM (init := pi) fun pi arg => updateVars pi arg
 
 def term2Expr (pi : ParsingInfo) (t : Term) : LamReif.ReifM (Expr × ParsingInfo) := do
   let t ← updateLetBindings pi t
@@ -1363,7 +1361,7 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
         | "leftIff"       => pure (leftIff (parseNat params[0]!))
         | "leftNot"       => pure (leftNot (parseNat params[0]!))
         | "leftEx"        => pure (leftEx (parseNat (params[0]!)) (parseParamString (params[1]!)))
-        | "leftForall"    =>
+        | "leftForall" | "instForall"   =>
           let (t, piloc) ← extractTerm pi params[1]!
           pi := piloc
           pure (leftForall (parseNat (params[0]!)) t)
@@ -1372,7 +1370,7 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
         | "rightImplies"  => pure (rightImplies (parseNat params[0]!))
         | "rightIff"      => pure (rightIff (parseNat params[0]!))
         | "rightNot"      => pure (rightNot (parseNat params[0]!))
-        | "rightEx"       =>
+        | "rightEx" | "rightExists"      =>
           let (t, piloc) ← extractTerm pi params[1]!
           pi := piloc
           pure (rightEx (parseNat (params[0]!)) t)

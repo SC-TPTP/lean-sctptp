@@ -841,6 +841,7 @@ noncomputable def ClassicalChoice.{u} (α : Sort u) [inst : Nonempty α] := Clas
   Setect metavariables that have not been yet assigned in (t : Expr), and assign them using Classical.choice
 -/
 def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
+  let t ← instantiateMVars t
   let mvars := (t.collectMVars {}).result
   for mvarId in mvars do
     let decl ← mvarId.getDecl

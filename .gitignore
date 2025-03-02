@@ -4,6 +4,7 @@
 /lakefile.olean
 /.lake
 /logs
+/tmp
 
 # Prover9
 /p9proof

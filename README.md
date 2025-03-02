@@ -12,15 +12,17 @@ This codebase builds upon the [Lean Auto](https://github.com/leanprover/lean-aut
 
 ## Usage
 
-At the moment, two solvers are available: `Egg` and `Goeland` through the `egg` and `goeland` tactics, respectively. To use these new tactics, simply set the following desired options:
+At the moment, three solvers are available: `Egg`, `Goeland`, and `Prover9` through the `egg`, `goeland`, and `prover9` tactics, respectively. To use these new tactics, simply set the following desired options:
 
 - `set_option auto.tptp true`
-- `set_option auto.tptp.egg.path "/path/to/egg-sc-tptp"`
-- `set_option auto.tptp.goeland.path "/path/to/goeland_linux_release"`
 - `set_option auto.mono.mode "fol"`
-and invoke either `egg` or  `goeland` in your proofs. The tactics will perform all the steps mentioned above. Examples are available at the end of the [Tactic.lean](Auto/Tactic.lean) file.
+- `set_option auto.tptp.egg.path "/path/to/egg-sc-tptp"`
+- `set_option auto.tptp.goeland.path "/path/to/goeland-sc-tptp"`
+- `set_option auto.tptp.prover9.path "/path/to/prover9-sc-tptp"`
 
-Adding new solvers is straightforward as long as they support the SC-TPTP format. Simply add a new tactic at the end of the [Tactic.lean](Auto/Tactic.lean) file.
+and invoke either `egg`, `goeland`, or `prover9` in your proofs. The tactics will perform all the steps mentioned above. Examples are available at the end of the [Tactic.lean](Auto/Tactic.lean) file.
+
+Adding new solvers is straightforward as long as they support the SC-TPTP format. Simply add a method to execute the solver in the [TPTP.lean](Auto/Solver/TPTP.lean) file, then add a new tactic using this method at the end of the [Tactic.lean](Auto/Tactic.lean) file.  You can use the existing implemented tactics as templates.
 
 ## Requirements
 

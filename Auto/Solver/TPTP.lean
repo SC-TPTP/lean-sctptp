@@ -114,6 +114,11 @@ register_option auto.tptp.goeland.path : String := {
   descr := "Path to goeland prover"
 }
 
+register_option auto.tptp.prover9.path : String := {
+  defValue := "p9.jar"
+  descr := "Path to Prover9 JAR file"
+}
+
 namespace Auto.Solver.TPTP
 
 abbrev SolverProc := IO.Process.Child ⟨.piped, .piped, .piped⟩
@@ -207,61 +212,79 @@ def querySolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := 
     | .vampire        => queryVampire query)
   return (proven, ← Parser.TPTP.parse stdout)
 
-def queryEggSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
-  let path := auto.tptp.egg.path.get (← getOptions)
+
+/-- Helper function for executing file-based TPTP solvers -/
+def queryFileBasedSolver (solverName : String) (executable : String)
+  (buildArgs : String → String → Array String)
+  (isProvenFn : String → String → String → Bool)
+  (query : String) : MetaM (Option (Array Parser.TPTP.Command)) := do
   -- Hash the query to create unique file names
   let queryHash := toString <| hash query
-  let problemFile := s!"./.egg_problem_{queryHash}.p"
-  let solutionFile := s!"./.egg_problem_sol_{queryHash}.p"
+  let problemFile := s!"./tmp/.{solverName}_problem_{queryHash}.p"
+  let solutionFile := s!"./tmp/.{solverName}_solution_{queryHash}.p"
 
+  -- Create input and output files
   IO.FS.withFile problemFile .writeNew (fun stream => stream.putStr (query ++ "\n"))
   IO.FS.withFile solutionFile .writeNew (fun stream => stream.putStr "")
 
-  let solver ← createAux path #["--level1", problemFile, solutionFile]
+  -- Execute solver
+  let solver ← createAux executable (buildArgs problemFile solutionFile)
   let stdout ← solver.stdout.readToEnd
   let stderr ← solver.stderr.readToEnd
   solver.kill
 
-  let proven := (stdout == "" ∧ stderr == "")
+  -- Read proof from solution file
   let proof ← IO.FS.readFile solutionFile
+  let proven := isProvenFn stdout stderr proof
 
+  -- Clean up temporary files
   IO.FS.removeFile problemFile
   IO.FS.removeFile solutionFile
 
+  -- Log results
   if proven then
     trace[auto.tptp.result] "Proof: \n{proof}"
-  else
-    trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}"
-
-  return (proven, ← Parser.TPTP.parse proof)
-
-def queryGoelandSolver (query : String) : MetaM (Bool × Array Parser.TPTP.Command) := do
-  let path := auto.tptp.goeland.path.get (← getOptions)
-  -- Hash the query to create unique file names
-  let queryHash := toString <| hash query
-  let problemFile := s!"./.goeland_problem_{queryHash}.p"
-  let solutionFile := s!"./.goeland_problem_sol_{queryHash}.p"
-
-  IO.FS.withFile problemFile .writeNew (fun stream => stream.putStr (query ++ "\n"))
-  IO.FS.withFile solutionFile .writeNew (fun stream => stream.putStr "")
-
-  let solver ← createAux path #["-otptp", "-wlogs", "-no_id", "-quoted_pred", s!"-proof_file=./.goeland_problem_sol_{queryHash}", problemFile]
-  let stdout ← solver.stdout.readToEnd
-  let stderr ← solver.stderr.readToEnd
-  solver.kill
-
-  let proof ← IO.FS.readFile solutionFile
-  let proven := (stderr == "" ∧ proof != "")
-
-  IO.FS.removeFile problemFile
-  IO.FS.removeFile solutionFile
-
-  if proven then
-    trace[auto.tptp.result] "Proof: \n{proof}"
+    return some (← Parser.TPTP.parse proof)
   else
     trace[auto.tptp.result] "Result: \nstderr:\n{stderr}\nstdout:\n{stdout}\nproof:\n{proof}"
+    return none
 
-  return (proven, ← Parser.TPTP.parse proof)
+def queryEggSolver (query : String) : MetaM (Option (Array Parser.TPTP.Command)) := do
+  let executable := auto.tptp.egg.path.get (← getOptions)
+  queryFileBasedSolver "egg" executable
+    (fun problemFile solutionFile => #["--level1", problemFile, solutionFile])
+    (fun stdout stderr _ => stdout == "" ∧ stderr == "")
+    query
+
+def queryGoelandSolver (query : String) : MetaM (Option (Array Parser.TPTP.Command)) := do
+  let executable := auto.tptp.goeland.path.get (← getOptions)
+  queryFileBasedSolver "goeland" executable
+    (fun problemFile solutionFile =>
+      #["-otptp", "-wlogs", "-no_id", "-quoted_pred",
+        s!"-proof_file={solutionFile.dropRight 2}", problemFile])
+    (fun _ stderr proof => stderr == "" ∧ proof != "")
+    query
+
+
+def containsSubstr (s : String) (sub : String) : Bool :=
+  if sub.isEmpty then true
+  else
+    let endIdx := s.endPos.byteIdx - sub.endPos.byteIdx + 1
+    let rec checkFrom (i : Nat) : Bool :=
+      if i < endIdx then
+        if s.substrEq ⟨i⟩ sub 0 sub.endPos.byteIdx then true
+        else checkFrom (i + 1)
+      else false
+    termination_by endIdx - i
+    checkFrom 0
+
+def queryProver9Solver (query : String) : MetaM (Option (Array Parser.TPTP.Command)) := do
+  let executable := "java"
+  let jarPath := auto.tptp.prover9.path.get (← getOptions)
+  queryFileBasedSolver "prover9" executable
+    (fun problemFile solutionFile => #["-jar", jarPath, problemFile, solutionFile])
+    (fun _ stderr _ => !(containsSubstr stderr "SEARCH FAILED"))
+    query
 
 end Solver.TPTP
 

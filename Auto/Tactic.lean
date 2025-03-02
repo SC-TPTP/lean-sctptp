@@ -26,6 +26,7 @@ syntax uord := atomic(unfolds) <|> defeqs
 syntax autoinstr := ("👍" <|> "👎")?
 syntax (name := auto) "auto" autoinstr hints (uord)* : tactic
 syntax (name := egg) "egg" autoinstr hints (uord)* : tactic
+syntax (name := prover9) "prover9" autoinstr hints (uord)* : tactic
 syntax (name := goeland) "goeland" autoinstr hints (uord)* : tactic
 syntax (name := mononative) "mononative" hints (uord)* : tactic
 syntax (name := intromono) "intromono" hints (uord)* : tactic
@@ -1171,7 +1172,7 @@ partial def reconstructProof (proofsteps : Array Parser.TPTP.ProofStep)
       reconstructProof (proofsteps.toSubarray 0 (premise+1)) proofStepNameToIndex
 
 def querySCTPTPSolver
-  (solverName : String) (querySolverFn : String → MetaM (Bool × Array Parser.TPTP.Command))
+  (solverName : String) (querySolverFn : String → MetaM (Option (Array Parser.TPTP.Command)))
   (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) := do
   let lamVarTy := (← LamReif.getVarVal).map Prod.snd
   let lamEVarTy ← LamReif.getLamEVarTy
@@ -1184,15 +1185,15 @@ def querySCTPTPSolver
   else
     lam2TH0 lamVarTy lamEVarTy exportLamTerms
   trace[auto.tptp.printQuery] "\n{query}"
-  let (proven, tptpProof) ← querySolverFn query
-  if proven then
+  let tptpProof ← querySolverFn query
+  match tptpProof with
+  | none => throwError "{solverName} failed to find proof"
+  | some tptpProof =>
     try
       let proofSteps ← Parser.TPTP.getSCTPTPProof tptpProof
       return proofSteps
     catch e =>
       throwError "{solverName} found a proof, but proof reification failed with {e.toMessageData}"
-  else
-    throwError "{solverName} failed to find proof"
 
 /--
   Run `auto`'s monomorphization and preprocessing, then send the problem to the SC-TPTP solver
@@ -1292,20 +1293,37 @@ def evalGoeland : Tactic
   evalSCTPTPSolverTactic "Goeland" runGoeland parsedInstr hints uords
 | _ => throwUnsupportedSyntax
 
+/-- Query the Prover9 solver with the given facts -/
+def querySCTPTPProver9 (exportFacts : Array Embedding.Lam.REntry) : LamReif.ReifM (Array Parser.TPTP.ProofStep) :=
+  querySCTPTPSolver "Prover9" Solver.TPTP.queryProver9Solver exportFacts
+
+/-- Run `auto`'s monomorphization and preprocessing, then send the problem to Prover9 solver -/
+def runProver9 (lemmas : Array Lemma) (inhFacts : Array Lemma) : MetaM (Array Parser.TPTP.ProofStep) :=
+  runSCTPTPSolver "runProver9" querySCTPTPProver9 lemmas inhFacts
+
+@[tactic prover9]
+def evalProver9 : Tactic
+| `(prover9 | prover9 $instr $hints $[$uords]*) => do
+  let parsedInstr ← parseInstr instr
+  evalSCTPTPSolverTactic "Prover9" runProver9 parsedInstr hints uords
+| _ => throwUnsupportedSyntax
+
 end Auto
 
 
 set_option auto.tptp true
-set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/egg-sc-tptp"
-set_option auto.tptp.goeland.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/goeland_linux_release"
 set_option auto.mono.mode "fol"
+-- TODO: Modify these lines to point to your local paths of the solvers
+set_option auto.tptp.egg.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/prover_executables/egg-sc-tptp"
+set_option auto.tptp.goeland.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/prover_executables/goeland_linux_release"
+set_option auto.tptp.prover9.path "/home/poiroux/Documents/EPFL/PhD/Lean/lean-auto/prover_executables/p9.jar"
 
 set_option trace.auto.tptp.printQuery true
 set_option trace.auto.tptp.printProof true
 set_option trace.auto.tptp.result true
 set_option trace.auto.lamReif.printValuation true
-
 set_option diagnostics true
+
 -- set_option pp.explicit true
 -- set_option pp.mvars true
 -- set_option pp.funBinderTypes true
@@ -1314,7 +1332,7 @@ set_option diagnostics true
 -- set_option pp.letVarTypes true
 -- set_option pp.mvars.withType true
 
--- # Known issues
+-- # Known minor issues
 -- Shadowing hypothesis names
   -- example (α : Type) (a b : α)
   --   (h : ∀ y : α, y = a)
@@ -1335,6 +1353,11 @@ set_option diagnostics true
   --   (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
   --   cemptySet = sf cemptySet := by
   --   egg
+
+-- Sometimes we have `already exists file` error caused by the IDE refreshing in the middle of the call to the solver
+
+
+-- # Egg examples
 
 example : A ↔ A := by
   egg
@@ -1387,36 +1410,27 @@ example (α : Type) (f : α -> α) (a : α)
   egg
 
 example (α : Type) (f : α -> α) (a : α)
-  -- (h : ∃ y : Nat, y = y)
   (h1 : ∀ x, (f (f (f ( f x)))) = x)
   (h2 : a =  f (f (f (f ( f a))))) :
   a = f a := by
   egg
 
--- issue here: `y` is not used, so related variables instantiated by the ATP have unknown type
-theorem saturation (α : Type) [Nonempty α] (sf : α -> α) (cemptySet : α)
-  -- (h : ∃ y : Nat, y = y)
-  (h1 : ∀ x, x = sf (sf (sf x)))
-  (h2 : ∀ x, (∀ y : α, x = sf (sf x))) :
-  cemptySet = sf cemptySet := by
+theorem testiff (α : Type) (p : α -> Prop) (f : α -> α) (a : α)
+  (h1 : ∀ x, p x ↔ p (f (f (f (f (f (f (f (f x)))))))))
+  (h2 : ∀ x, p x ↔ p (f (f (f (f (f x)))))) :
+  p (f a) ↔ p a := by
   egg
 
-theorem testiff (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
-  (h1 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
-  (h2 : ∀ x, p x ↔ p (sf (sf (sf (sf (sf x)))))) :
-  p (sf cemptySet) ↔ p cemptySet := by
+example (α : Type) (p : α -> Prop) (f : α -> α) (a : α)
+  (h1 : ∀ x, p x = p (f (f (f (f (f (f (f (f x)))))))))
+  (h2 : ∀ x, p x = p (f (f (f (f (f x)))))) :
+  p (f a) = p a := by
   egg
 
-example (α : Type) (p : α -> Prop) (sf : α -> α) (cemptySet : α)
-  (h1 : ∀ x, p x = p (sf (sf (sf (sf (sf (sf (sf (sf x)))))))))
-  (h2 : ∀ x, p x = p (sf (sf (sf (sf (sf x)))))) :
-  p (sf cemptySet) = p cemptySet := by
-  egg
-
-example (α : Type) (sf : α -> α)
-  (h1 : ∀ x, x = sf (sf (sf x)))
-  (h2 : ∀ x, x = sf (sf x)) :
-  ∀ x, x = sf x := by
+example (α : Type) (f : α -> α)
+  (h1 : ∀ x, x = f (f (f x)))
+  (h2 : ∀ x, x = f (f x)) :
+  ∀ x, x = f x := by
   intro x
   egg
 
@@ -1426,8 +1440,11 @@ example (α : Type) (f : α -> α) (a : α)
   f a = a := by
   egg
 
--- issue here: we have two different variables `Sko_0` ^^'
-example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
+
+-- # Goeland examples
+
+example (α : Type) [Nonempty α] (d : α → Prop) :
+  ∃ y : α, ∀ x : α, (d x → d y) := by
   goeland
 
 theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
@@ -1439,16 +1456,13 @@ example (α : Type) [Nonempty α] (f : α -> α) (a : α)
   f a = a := by
   goeland
 
-example (α : Type) [Nonempty α] (d : α → Prop) : ∃ y : α, ∀ x : α, (d x → d y) := by
-  apply by_contradiction; intro goal
-  have f0 : ¬∃ eb!_0, ∀ (eb!_1 : α), d eb!_1 → d eb!_0 := by
-    apply by_contradiction; intro h
-    contradiction
-  have f3 := f0
-  rw [not_exists] at f3
-  have X05_9 : α := by
-    apply Classical.choice inferInstance
-  specialize f3 X05_9
-  rcases (Classical.not_forall.mp f3) with ⟨Sko_0, f4⟩
-  rcases (Classical.not_imp.mp f4) with ⟨f5_1, f5_2⟩
-  sorry
+
+-- # Prover9 examples
+
+example (α : Type) [Nonempty α] (P Q : α → Prop) (a : α) :
+  ((∀ y, Q y)) → (P a) := by
+  prover9
+
+example (α : Type) [Nonempty α] (P Q : α → Prop) (a : α) :
+  ((∀ x, P x) ∨ (∀ y, Q y)) → (P a ∨ Q a) := by
+  prover9

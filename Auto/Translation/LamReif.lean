@@ -124,16 +124,16 @@ def printCheckerStats : ReifM Unit := do
 
 def printValuation : ReifM Unit := do
   let tyVal ← getTyVal
-  for ((e, lvl), idx) in tyVal.zipWithIndex do
+  for ((e, lvl), idx) in tyVal.zipIdx do
     trace[auto.lamReif.printValuation] "Type Atom {idx} := {e} : {Expr.sort lvl}"
   let varVal ← getVarVal
-  for ((e, s), idx) in varVal.zipWithIndex do
+  for ((e, s), idx) in varVal.zipIdx do
     trace[auto.lamReif.printValuation] "Term Atom {idx} : {toString s} := {e}"
   let lamEVarTy ← getLamEVarTy
-  for (s, idx) in lamEVarTy.zipWithIndex do
+  for (s, idx) in lamEVarTy.zipIdx do
     trace[auto.lamReif.printValuation] "Etom {idx} : {toString s}"
   let lamIl ← getLamILTy
-  for (s, idx) in lamIl.zipWithIndex do
+  for (s, idx) in lamIl.zipIdx do
     trace[auto.lamReif.printValuation] "LamILTy {idx} := {s}"
 
 def printProofs : ReifM Unit := do
@@ -197,7 +197,7 @@ def lookupAssertion! (t : LamTerm) : ReifM (Expr × DTr × LamTerm × Nat) := do
     throwError "{decl_name%} :: Unknown assertion {t}"
 
 def lookupRTable! (pos : Nat) : ReifM REntry := do
-  if let .some r := (← getRTable).get? pos then
+  if let .some r := (← getRTable)[pos]? then
     return r
   else
     throwError "{decl_name%} :: Unknown REntry {pos}"
@@ -277,7 +277,7 @@ def getLamTyValAtMeta : ReifM LamTyVal := do
   let lamEVarTy ← getLamEVarTy
   return ⟨fun n => varTy[n]?.getD (.base .prop),
           fun n => lamILTy[n]?.getD (.base .prop),
-          fun n => (lamEVarTy.get? n).getD (.base .prop)⟩
+          fun n => lamEVarTy[n]?.getD (.base .prop)⟩
 
 def resolveLamBaseTermImport : LamBaseTerm → ReifM LamBaseTerm
 | .eqI n      => do return .eq (← lookupLamILTy! n)
@@ -502,7 +502,7 @@ end ILLifting
 section Checker
 
   def nonemptyOfAtom (n : Nat) : ReifM (Option REntry) := do
-    let .some (_, s) := (← getVarVal).get? n
+    let .some (_, s) := (← getVarVal)[n]?
       | throwError "{decl_name%} :: Index {n} out of bound"
     if !(← inhSubsumptionCheck s) then
       return .none
@@ -511,7 +511,7 @@ section Checker
     return .some re
 
   def nonemptyOfEtom (n : Nat) : ReifM (Option REntry) := do
-    let .some s := (← getLamEVarTy).get? n
+    let .some s := (← getLamEVarTy)[n]?
       | throwError "{decl_name%} :: Index {n} out of bound"
     if !(← inhSubsumptionCheck s) then
       return .none
@@ -835,7 +835,7 @@ section CheckerUtils
       throwError "{decl_name%} :: Length of lctx does not equal size of reorder map"
     let mut ex : Array LamSort := rmap.map (fun _ => .atom 0)
     let mut argBVarIdx : Array Nat := #[]
-    for (s, i) in (Array.mk lctx).zipWithIndex do
+    for (s, i) in (Array.mk lctx).zipIdx do
       let .some i' := rmap[i]?
         | throwError "{decl_name%} :: Does not know where does `.bvar i` map to"
       if i' >= lsize then

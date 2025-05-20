@@ -9,7 +9,7 @@ namespace BVLems
 
   theorem toNat_ofNat (n a : Nat) : (BitVec.ofNat n a).toNat = a % (2 ^ n) := rfl
 
-  theorem toNat_ofNatLt {n : Nat} (i : Nat) (p : i < 2 ^ n) : (BitVec.ofNatLt i p).toNat = i := rfl
+  theorem toNat_ofNatLt {n : Nat} (i : Nat) (p : i < 2 ^ n) : (BitVec.ofNatLT i p).toNat = i := rfl
 
   theorem toNat_le (a : BitVec n) : a.toNat < 2 ^ n := by
     rcases a with ⟨⟨_, isLt⟩⟩; exact isLt
@@ -66,7 +66,7 @@ namespace BVLems
       have hle := of_decide_eq_true hdec
       rw [Bool.dite_eq_true (proof:=hle), toNat_zeroExtend']
       rw [Nat.mod_eq_of_lt]; rcases a with ⟨⟨a, isLt⟩⟩;
-      apply Nat.le_trans isLt; apply Nat.pow_le_pow_of_le_right (Nat.le_step .refl) hle
+      apply Nat.le_trans isLt; apply Nat.pow_le_pow_right (Nat.le_step .refl) hle
 
   theorem toNat_sub (a b : BitVec n) : (a - b).toNat = (2 ^ n - b.toNat + a.toNat) % (2 ^ n) := rfl
 
@@ -93,12 +93,12 @@ namespace BVLems
   theorem ushiftRight_ge_length_eq_zero (a : BitVec n) (i : Nat) : i ≥ n → a >>> i = 0#n := by
     intro h; apply eq_of_val_eq; rw [toNat_ushiftRight, toNat_ofNat]
     apply (Nat.le_iff_div_eq_zero (Nat.two_pow_pos _)).mpr
-    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_of_le_right (.step .refl) h)
+    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_right (.step .refl) h)
 
   theorem ushiftRight_ge_length_eq_zero' (a : BitVec n) (i : Nat) : i ≥ n → BitVec.ofNat n (a.toNat >>> i) = 0#n := by
     intro h; apply congrArg (@BitVec.ofNat n)
     rw [Nat.shiftRight_eq_div_pow, Nat.le_iff_div_eq_zero (Nat.two_pow_pos _)]
-    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_of_le_right (.step .refl) h)
+    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_right (.step .refl) h)
 
   theorem msb_equiv_lt (a : BitVec n) : !a.msb ↔ a.toNat < 2 ^ (n - 1) := by
     dsimp [BitVec.msb, BitVec.getMsbD, BitVec.getLsbD]
@@ -131,7 +131,7 @@ namespace BVLems
       have hzero : (2 ^ n - BitVec.toNat a - 1) >>> i = 0 := by
         rw [Nat.shiftRight_eq_div_pow]; apply (Nat.le_iff_div_eq_zero (Nat.two_pow_pos _)).mpr
         rw [Nat.sub_one, Nat.pred_lt_iff_le (Nat.two_pow_pos _)]
-        apply Nat.le_trans (Nat.sub_le _ _) (Nat.pow_le_pow_of_le_right (.step .refl) h)
+        apply Nat.le_trans (Nat.sub_le _ _) (Nat.pow_le_pow_right (.step .refl) h)
       apply eq_of_val_eq; rw [toNat_ofNatLt, hzero]
       rw [toNat_neg, Int.mod_def', Int.emod]
       rw [Nat.zero_mod, Int.natAbs_ofNat, Nat.succ_eq_add_one, Nat.zero_add]
@@ -139,14 +139,14 @@ namespace BVLems
       rw [Int.toNat_ofNat, BitVec.toNat_ofNat]
       cases n <;> try rfl
       case succ n =>
-        have hlt : 2 ≤ 2 ^ Nat.succ n := @Nat.pow_le_pow_of_le_right 2 (.step .refl) 1 (.succ n) (Nat.succ_le_succ (Nat.zero_le _))
+        have hlt : 2 ≤ 2 ^ Nat.succ n := @Nat.pow_le_pow_right 2 (.step .refl) 1 (.succ n) (Nat.succ_le_succ (Nat.zero_le _))
         rw [Nat.mod_eq_of_lt (a:=1) hlt]
         rw [Nat.mod_eq_of_lt]; apply Nat.sub_lt (Nat.le_trans (.step .refl) hlt) .refl
 
   theorem shiftRight_eq_zero_iff (a : BitVec n) (b : Nat) : a >>> b = 0#n ↔ a.toNat < 2 ^ b := by
     rw [ushiftRight_def]; rcases a with ⟨⟨a, isLt⟩⟩;
     unfold ushiftRight; rw [eq_iff_val_eq]
-    dsimp [BitVec.toNat, BitVec.ofNat]
+    dsimp only [BitVec.toNat, BitVec.ofNat, Fin.val_ofNat', BitVec.ofNatLT]
     rw [Nat.zero_mod, Nat.shiftRight_eq_div_pow]
     apply Iff.intro <;> intro h
     case mp =>
@@ -207,7 +207,7 @@ namespace BVLems
 
   theorem shl_toNat_equiv_short (a : BitVec n) (b : BitVec m) (h : m ≤ n) : a <<< b.toNat = a <<< (zeroExtend n b) := by
     apply eq_of_val_eq; rw [toNat_shiftLeft, smtshiftLeft_def, toNat_shiftLeft, toNat_zeroExtend, Nat.mod_eq_of_lt (a:=BitVec.toNat b)]
-    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_of_le_right (.step .refl) h)
+    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_right (.step .refl) h)
 
   theorem shl_toNat_equiv_long (a : BitVec n) (b : BitVec m) (h : m > n) : a <<< b.toNat =
     if (b >>> (BitVec.ofNat m n)) = 0#m then a <<< (zeroExtend n b) else 0 := by
@@ -250,7 +250,7 @@ namespace BVLems
 
   theorem lshr_toNat_equiv_short (a : BitVec n) (b : BitVec m) (h : m ≤ n) : a >>> b.toNat = a >>> (zeroExtend n b) := by
     apply eq_of_val_eq; rw [toNat_ushiftRight, smtushiftRight_def, toNat_ushiftRight, toNat_zeroExtend, Nat.mod_eq_of_lt]
-    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_of_le_right (.step .refl) h)
+    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_right (.step .refl) h)
 
   theorem lshr_toNat_equiv_long (a : BitVec n) (b : BitVec m) (h : m > n) : a >>> b.toNat =
     if (b >>> (BitVec.ofNat m n)) = 0#m then a >>> (zeroExtend n b) else 0 := by
@@ -295,7 +295,7 @@ namespace BVLems
 
   theorem ashr_toNat_equiv_short (a : BitVec n) (b : BitVec m) (h : m ≤ n) : a.sshiftRight b.toNat = a.sshiftRight (zeroExtend n b).toNat := by
     apply eq_of_val_eq; rw [toNat_zeroExtend, Nat.mod_eq_of_lt]
-    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_of_le_right (.step .refl) h)
+    apply Nat.le_trans (toNat_le _) (Nat.pow_le_pow_right (.step .refl) h)
 
   theorem ashr_toNat_equiv_long (a : BitVec n) (b : BitVec m) (h : m > n) : a.sshiftRight b.toNat =
     if (b >>> (BitVec.ofNat m n)) = 0#m then a.sshiftRight (zeroExtend n b).toNat else (if a.msb then (1#n).neg else 0#n) := by
@@ -385,7 +385,7 @@ theorem LamTerm.congr_maxEVarSucc_shl_equiv
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂)
   (eqbbv : maxEVarSucc bbv₁ = maxEVarSucc bbv₂) :
   (shl_equiv n₁ a₁ b₁ bbv₁).maxEVarSucc = (shl_equiv n₂ a₂ b₂ bbv₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb, eqbbv]
+  dsimp [shl_equiv, mkIte, mkNatBinOp, mkBvBinOp, maxEVarSucc]; rw [eqa, eqb, eqbbv]
 
 theorem LamEquiv.congr_shl_equiv
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -415,7 +415,7 @@ theorem LamTerm.congr_maxEVarSucc_shl_toNat_equiv_short
   (eqa : maxEVarSucc a₁ = maxEVarSucc a₂)
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂) :
   (shl_toNat_equiv_short n₁ a₁ m₁ b₁).maxEVarSucc = (shl_toNat_equiv_short n₂ a₂ m₂ b₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb]
+  dsimp [shl_toNat_equiv_short, mkBvBinOp, mkBvUOp, maxEVarSucc]; rw [eqa, eqb]
 
 theorem LamEquiv.congr_shl_toNat_equiv_short
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -443,7 +443,7 @@ theorem LamTerm.congr_maxEVarSucc_shl_toNat_equiv_long
   (eqa : maxEVarSucc a₁ = maxEVarSucc a₂)
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂) :
   (shl_toNat_equiv_long n₁ a₁ m₁ b₁).maxEVarSucc = (shl_toNat_equiv_long n₂ a₂ m₂ b₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb]
+  dsimp [shl_toNat_equiv_long, mkIte, mkEq, mkBvBinOp, mkBvUOp, maxEVarSucc]; rw [eqa, eqb]
 
 theorem LamEquiv.congr_shl_toNat_equiv_long
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -478,7 +478,7 @@ theorem LamTerm.congr_maxEVarSucc_lshr_equiv
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂)
   (eqbbv : maxEVarSucc bbv₁ = maxEVarSucc bbv₂) :
   (lshr_equiv n₁ a₁ b₁ bbv₁).maxEVarSucc = (lshr_equiv n₂ a₂ b₂ bbv₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb, eqbbv]
+  dsimp [lshr_equiv, mkIte, mkNatBinOp, mkBvBinOp, maxEVarSucc]; rw [eqa, eqb, eqbbv]
 
 theorem LamEquiv.congr_lshr_equiv
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -507,7 +507,7 @@ theorem LamTerm.congr_maxEVarSucc_lshr_toNat_equiv_short
   (eqa : maxEVarSucc a₁ = maxEVarSucc a₂)
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂) :
   (lshr_toNat_equiv_short n₁ a₁ m₁ b₁).maxEVarSucc = (lshr_toNat_equiv_short n₂ a₂ m₂ b₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb]
+  dsimp [lshr_toNat_equiv_short, mkBvBinOp, mkBvUOp, maxEVarSucc]; rw [eqa, eqb]
 
 theorem LamEquiv.congr_lshr_toNat_equiv_short
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -535,7 +535,7 @@ theorem LamTerm.congr_maxEVarSucc_lshr_toNat_equiv_long
   (eqa : maxEVarSucc a₁ = maxEVarSucc a₂)
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂) :
   (lshr_toNat_equiv_long n₁ a₁ m₁ b₁).maxEVarSucc = (lshr_toNat_equiv_long n₂ a₂ m₂ b₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb]
+  dsimp [lshr_toNat_equiv_long, mkIte, mkEq, mkBvBinOp, mkBvUOp, maxEVarSucc]; rw [eqa, eqb]
 
 theorem LamEquiv.congr_lshr_toNat_equiv_long
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -572,7 +572,7 @@ theorem LamTerm.congr_maxEVarSucc_ashr_equiv
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂)
   (eqbbv : maxEVarSucc bbv₁ = maxEVarSucc bbv₂) :
   (ashr_equiv n₁ a₁ b₁ bbv₁).maxEVarSucc = (ashr_equiv n₂ a₂ b₂ bbv₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb, eqbbv]
+  dsimp [ashr_equiv, mkIte, mkEq, mkNatBinOp, mkBvUOp, mkBvBinOp, maxEVarSucc]; rw [eqa, eqb, eqbbv]
 
 theorem LamEquiv.congr_ashr_equiv
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -607,7 +607,7 @@ theorem LamTerm.congr_maxEVarSucc_ashr_toNat_equiv_short
   (eqa : maxEVarSucc a₁ = maxEVarSucc a₂)
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂) :
   (ashr_toNat_equiv_short n₁ a₁ m₁ b₁).maxEVarSucc = (ashr_toNat_equiv_short n₂ a₂ m₂ b₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb]
+  dsimp [ashr_toNat_equiv_short, mkBvUOp, mkBvBinOp, maxEVarSucc]; rw [eqa, eqb]
 
 theorem LamEquiv.congr_ashr_toNat_equiv_short
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -638,7 +638,7 @@ theorem LamTerm.congr_maxEVarSucc_ashr_toNat_equiv_long
   (eqa : maxEVarSucc a₁ = maxEVarSucc a₂)
   (eqb : maxEVarSucc b₁ = maxEVarSucc b₂) :
   (ashr_toNat_equiv_long n₁ a₁ m₁ b₁).maxEVarSucc = (ashr_toNat_equiv_long n₂ a₂ m₂ b₂).maxEVarSucc := by
-  dsimp [maxEVarSucc]; rw [eqa, eqb]
+  dsimp [ashr_toNat_equiv_long, mkIte, mkEq, mkBvUOp, mkBvBinOp, maxEVarSucc]; rw [eqa, eqb]
 
 theorem LamEquiv.congr_ashr_toNat_equiv_long
   (eqa : LamEquiv lval lctx (.base (.bv n)) a₁ a₂)
@@ -754,10 +754,11 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
             cases b <;> try apply Nat.max_zero_left
             case ncst nc =>
               cases nc <;> (try apply Nat.max_zero_left) <;> try (
-                dsimp [pushBVCast, maxEVarSucc]
-                rw [IH (Nat.le_trans LamTerm.size_app_ge_size_arg leFn), IH leArg])
+                dsimp [pushBVCast, maxEVarSucc, mkBvBinOp]
+                simp [IH (Nat.le_trans LamTerm.size_app_ge_size_arg leFn), IH leArg])
               case nsub =>
-                simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right, Nat.max_eq_left (Nat.le_refl _)]
+                dsimp [pushBVCast, maxEVarSucc, bvofNat_nsub, mkIte, mkBvBinOp, mkNatBinOp, Nat.max]
+                simp [IH (Nat.le_trans LamTerm.size_app_ge_size_arg leFn), IH leArg]
       case ofInt m => apply Nat.max_zero_left
       case none =>
         have fneq := fun ct => @IH ct _ leFn
@@ -794,7 +795,7 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
                     Eq.trans (LamTerm.congr_maxEVarSucc_shl_equiv (n₁:=n) (n₂:=n)
                       (argeq₁ .none) (argeq .none) (argeq (.ofNat n)))
                       (by
-                        dsimp [maxEVarSucc, pushBVCast]
+                        dsimp [shl_equiv, mkIte, mkNatBinOp, mkBvBinOp, mkBvNatBinOp, maxEVarSucc, pushBVCast]
                         simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right]
                         apply maxlem₁)
                   cases arg
@@ -808,7 +809,7 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
                         cases bvc
                         case bvtoNat m =>
                           dsimp [maxEVarSucc, pushBVCast]
-                          cases m.ble n <;> dsimp [maxEVarSucc] <;> rw [argeq₁, argeq₂]
+                          cases m.ble n <;> dsimp [shl_toNat_equiv_short, shl_toNat_equiv_long, mkIte, mkEq, mkBvUOp, mkBvBinOp, maxEVarSucc] <;> rw [argeq₁, argeq₂]
                           simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right, maxlem₁]
                         all_goals apply h_none_shl
                       all_goals apply h_none_shl
@@ -821,7 +822,7 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
                     Eq.trans (LamTerm.congr_maxEVarSucc_lshr_equiv (n₁:=n) (n₂:=n)
                       (argeq₁ .none) (argeq .none) (argeq (.ofNat n)))
                       (by
-                        dsimp [maxEVarSucc, pushBVCast]
+                        dsimp [lshr_equiv, mkIte, mkNatBinOp, mkBvBinOp, mkBvNatBinOp, maxEVarSucc, pushBVCast]
                         simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right]
                         apply maxlem₁)
                   cases arg
@@ -835,7 +836,7 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
                         cases bvc
                         case bvtoNat m =>
                           dsimp [maxEVarSucc, pushBVCast]
-                          cases m.ble n <;> dsimp [maxEVarSucc] <;> rw [argeq₁, argeq₂]
+                          cases m.ble n <;> dsimp [lshr_toNat_equiv_short , lshr_toNat_equiv_long, mkIte, mkEq, mkBvUOp, mkBvBinOp, maxEVarSucc] <;> rw [argeq₁, argeq₂]
                           simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right, maxlem₁]
                         all_goals apply h_none_lshr
                       all_goals apply h_none_lshr
@@ -848,7 +849,7 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
                     Eq.trans (LamTerm.congr_maxEVarSucc_ashr_equiv (n₁:=n) (n₂:=n)
                       (argeq₁ .none) (argeq .none) (argeq (.ofNat n)))
                       (by
-                        dsimp [maxEVarSucc, pushBVCast]
+                        dsimp [ashr_equiv, mkIte, mkEq, mkNatBinOp, mkBvUOp, mkBvBinOp, mkBvNatBinOp, maxEVarSucc, pushBVCast]
                         simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right]
                         apply maxlem₂)
                   cases arg
@@ -862,7 +863,7 @@ theorem LamTerm.maxEVarSucc_pushBVCast : maxEVarSucc (pushBVCast ct t) = maxEVar
                         cases bvc
                         case bvtoNat m =>
                           dsimp [maxEVarSucc, pushBVCast]
-                          cases m.ble n <;> dsimp [maxEVarSucc] <;> rw [argeq₁, argeq₂]
+                          cases m.ble n <;> dsimp [ashr_toNat_equiv_short, ashr_toNat_equiv_long, mkIte, mkEq, mkBvUOp, mkBvBinOp, maxEVarSucc] <;> rw [argeq₁, argeq₂]
                           simp [Nat.max, Nat.max_zero_left, Nat.max_zero_right, maxlem₂]
                         all_goals apply h_none_ashr
                       all_goals apply h_none_ashr

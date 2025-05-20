@@ -293,7 +293,7 @@ def evalTacticsAtModule
   if let .some fhandle := resultFileHandle? then
     fhandle.putStrLn s!"Total elapsed time : {(← IO.monoMsNow) - startTime} ms"
     fhandle.putStrLn s!"\nSummary:\n"
-    for ((name, result), idx) in results.zipWithIndex do
+    for ((name, result), idx) in results.zipIdx do
       let resultStrs := result.map (fun (r, time, hb) => s!"{r.concise} {time} {hb}")
       fhandle.putStrLn s!"{idx} {resultStrs} {Name.uniqRepr name}"
 where
@@ -301,7 +301,7 @@ where
     (context : Core.Context) (state : Core.State) (ci : ConstantInfo)
     (logFileHandle? : Option IO.FS.Handle) (config : EvalTacticConfig)
     (nonterms : Std.HashSet (RegisteredTactic × Name)) : IO (Array (Result × Nat × Nat)) := do
-  config.tactics.zipWithIndex.mapM (fun (tactic, idx) => do
+  config.tactics.zipIdx.mapM (fun (tactic, idx) => do
     let metaAction : MetaM Result :=
       Term.TermElabM.run' <| Result.ofTacticOnExpr ci.type (tactic.toCiTactic ci)
     let coreAction : CoreM (Result × Nat × Nat) := (do
@@ -363,6 +363,8 @@ structure EvalTacticOnMathlibConfig where
   memoryLimitKb : Option Nat    := .none
   /-- Total time limit for each evaluation process, in seconds -/
   timeLimitS    : Option Nat    := .none
+  /-- Specify modules to run tactics on -/
+  moduleFilter  : Name → Bool   := fun _ => true
   /--
     On some problems, certain tactics may go into infinite loops not
     guarded by `Core.checkMaxHeartbeats`. These instances should be
@@ -376,9 +378,9 @@ structure EvalTacticOnMathlibConfig where
   `Mathlib` and `lean-auto` are available
 -/
 def evalTacticsAtMathlibHumanTheorems (config : EvalTacticOnMathlibConfig) : CoreM Unit := do
-  let mms ← mathlibModules
-  if !(← allMathlibModuleNamesCanBeFilename) then
-    throwError "{decl_name%} :: Some Mathlib modules have extra-ordinary names. Evaluation code needs to be changed!"
+  let mms := (← mathlibModules).filter config.moduleFilter
+  if !(mms.all Name.canBeFilename) then
+    throwError "{decl_name%} :: Some modules have extra-ordinary names. Evaluation code needs to be changed!"
   if !(← System.FilePath.isDir config.resultFolder) then
     IO.FS.createDir config.resultFolder
   let evaluateFilesHandle ← IO.FS.Handle.mk (config.resultFolder ++ "/evaluateFiles.txt") .write
@@ -542,7 +544,7 @@ def gatherETMHTResult (config : EvalTacticOnMathlibConfig) : CoreM Unit := do
   saveFile.putStrLn ""
   saveFile.putStrLn "Summary:"
   saveFile.putStrLn ""
-  for ((name, result), idx) in readResult.zipWithIndex do
+  for ((name, result), idx) in readResult.zipIdx do
     let resultStrs := result.map (fun (r, time, hb) => s!"{r.concise} {time} {hb}")
     saveFile.putStrLn s!"{idx} {resultStrs} {Name.uniqRepr name}"
 
@@ -562,7 +564,7 @@ def gatherETMHTResultAllowNonRet (config : EvalTacticOnMathlibConfig) : CoreM Un
   saveFile.putStrLn ""
   saveFile.putStrLn "Summary:"
   saveFile.putStrLn ""
-  for ((name, result), idx) in readResult.zipWithIndex do
+  for ((name, result), idx) in readResult.zipIdx do
     let resultStrs := result.map (fun (r, time, hb) => s!"{r.concise} {time} {hb}")
     saveFile.putStrLn s!"{idx} {resultStrs} {Name.uniqRepr name}"
   for path in nonRet do

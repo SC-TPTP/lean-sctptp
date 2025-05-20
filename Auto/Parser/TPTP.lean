@@ -652,6 +652,7 @@ structure ParsingInfo where
   lamEVarTy    : Array LamSort
   proverSkolem : Std.HashMap String (LamSort × Nat) := {}
   skolemExpr   : Array Expr := #[]
+  letBindings  : Std.HashMap String Term := {}
 
 open Embedding.Lam in
 def ParsingInfo.toLamTyVal (pi : ParsingInfo) : LamTyVal :=
@@ -900,7 +901,7 @@ open Embedding.Lam in
 -/
 def getProof (lamVarTy lamEVarTy : Array LamSort) (cmds : Array Command) : MetaM (Array LamTerm) := do
   let mut ret := #[]
-  let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}, #[]⟩
+  let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}, #[], {}⟩
   for ⟨cmd, args⟩ in cmds do
     match cmd with
     | "thf" | "tff" | "cnf" | "fof" =>
@@ -969,7 +970,7 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
       | .term s₁ f, .term _ a =>
         match s₁ with
         | .func argTy resTy => .term resTy (.app argTy f a)
-        | _ => .error s!"term2LamTermSCTPTP :: Non-function head `{f}` applied to argument"
+        | _ => .error s!"`app`: Non-function head `{f}` applied to argument"
       | r, p => .error s!"`app`: Unexpected term {t} produces ({r}) and ({p})"
     | _ => .error s!"`app`: Unexpected term {t}"
   | ⟨.ident ids, as⟩ =>
@@ -1009,11 +1010,11 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     | r => .error s!"`~`: Unexpected term {t} produces ({r})"
   | ⟨.op "|", [a,b]⟩   =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
-    | .term _ la, .term (.base .prop) lb => .term (.base .prop) (.mkOr la lb)
+    | .term _ la, .term _ lb => .term (.base .prop) (.mkOr la lb)
     | r₁, r₂ => .error s!"`|`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "&", [a,b]⟩   =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
-    | .term _ la, .term (.base .prop) lb => .term (.base .prop) (.mkAnd la lb)
+    | .term _ la, .term _ lb => .term (.base .prop) (.mkAnd la lb)
     | r₁, r₂ => .error s!"`&`: Unexpected term {t} produces ({r₁}) and ({r₂})"
   | ⟨.op "<=>", [a,b]⟩ =>
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
@@ -1033,7 +1034,7 @@ partial def term2LamTermSCTPTP (pi : ParsingInfo) (t : Term) (lctx : Std.HashMap
     match term2LamTermSCTPTP pi a lctx, term2LamTermSCTPTP pi b lctx with
     | .term _ la, .term _ lb => .term (.base .prop) (.mkImp la lb)
     | r₁, r₂ => .error s!"`=>`: Unexpected term {t} produces ({r₁}) and ({r₂})"
-  | _ => .error s!"term2LamTermSCTPTP :: Could not translate to Lean Expr: {termTreeString t}"
+  | _ => .error s!"{decl_name%} :: Could not translate to Lean Expr: {termTreeString t}"
 where
   processVar (pi : ParsingInfo) (var : Term) (lctx : Std.HashMap String (Nat × LamSort)) : Option (String × LamSort) :=
     match var with
@@ -1201,16 +1202,16 @@ def parseBool (pt : Term) : Bool :=
     match s with
     | "true" => true
     | "false" => false
-    | _   => panic! "parseBool: not a valid boolean"
-  | _ => panic! "parseBool: unexpected term format"
+    | _   => panic! "{decl_name%}: not a valid boolean"
+  | _ => panic! "{decl_name%}: unexpected term format"
 
 def parseNat (pt : Term) : Nat :=
   match pt with
   | Term.mk (Token.ident s) _ =>
     match s.toNat? with
     | some n => n
-    | none   => panic! "parseNat: not a valid numeral"
-  | _ => panic! "parseNat: unexpected term format"
+    | none   => panic! "{decl_name%}: not a valid numeral"
+  | _ => panic! "{decl_name%}: unexpected term format"
 
 def parseListNat (pt : Term) : List Nat :=
   match pt with
@@ -1220,18 +1221,18 @@ def parseListNat (pt : Term) : List Nat :=
       | Term.mk (Token.ident s) _ =>
         match s.toNat? with
         | some n => n
-        | none   => panic! s!"parseListNat: not a valid numeral: {s}"
-      | _ => panic! s!"parseListNat: unexpected term format: {arg}"
+        | none   => panic! s!"{decl_name%}: not a valid numeral: {s}"
+      | _ => panic! s!"{decl_name%}: unexpected term format: {arg}"
   | Term.mk (Token.ident s) _ =>
     match s.toNat? with
     | some n => [n]
-    | none   => panic! s!"parseListNat: not a valid numeral: {s}"
-  | _ => panic! s!"parseListNat: unexpected term format: {pt}"
+    | none   => panic! s!"{decl_name%}: not a valid numeral: {s}"
+  | _ => panic! s!"{decl_name%}: unexpected term format: {pt}"
 
 def parseParamString (pt : Term) : String :=
   match pt with
   | Term.mk (Token.ident s) _ => s
-  | _ => panic! "parseParamString: unexpected term format"
+  | _ => panic! "{decl_name%}: unexpected term format"
 
 def parseListString (pt : Term) : List String :=
   match pt with
@@ -1239,9 +1240,9 @@ def parseListString (pt : Term) : List String :=
     args.map fun arg =>
       match arg with
       | Term.mk (Token.ident s) _ => s
-      | _ => panic! s!"parseListString: unexpected term format: {arg}"
+      | _ => panic! s!"{decl_name%}: unexpected term format: {arg}"
   | Term.mk (Token.ident s) _ => [s]
-  | _ => panic! s!"parseListString: unexpected term format: {pt}"
+  | _ => panic! s!"{decl_name%}: unexpected term format: {pt}"
 
 structure InferenceRecord where
   rule      : InferenceRule
@@ -1257,12 +1258,31 @@ def InferenceRecord.toMessageData : InferenceRecord → MessageData
 instance : ToMessageData InferenceRecord where
   toMessageData record := InferenceRecord.toMessageData record
 
--- method traversing a parsed term, and adding new variables to the parsing info for each unknown variable
+/--
+  Check if the term contains variable that are let bindings and update the term
+-/
+partial def updateLetBindings (pi : ParsingInfo) (t : Term) : LamReif.ReifM Term := do
+  match t with
+  | ⟨.ident s, []⟩ =>
+    if pi.letBindings.contains s then
+      trace[auto.tptp.printProof] s!"Updating let binding {s}"
+      return pi.letBindings[s]!
+    else
+      return t
+  | ⟨a, args⟩ =>
+    return ⟨a, ← args.mapM (updateLetBindings pi)⟩
+
+/--
+  Method traversing a parsed term, and adding new variables to the parsing info for each unknown variable
+-/
 partial def updateVars (pi : ParsingInfo) (t : Term) : LamReif.ReifM ParsingInfo := do
   match t with
   | ⟨.ident s, []⟩ =>
+    trace[auto.tptp.printProof] s!"Checking variable {s}"
     match ident2LamConstr pi s with
-    | .error _ => pi.addSkolem s (.base .int)
+    | .error _ =>
+      trace[auto.tptp.printProof] s!"Adding new variable {s}"
+      pi.addSkolem s (.base .int)
     | _ => pure pi
   | ⟨_, args⟩ =>
     let mut pi := pi
@@ -1271,6 +1291,7 @@ partial def updateVars (pi : ParsingInfo) (t : Term) : LamReif.ReifM ParsingInfo
     pure pi
 
 def term2Expr (pi : ParsingInfo) (t : Term) : LamReif.ReifM (Expr × ParsingInfo) := do
+  let t ← updateLetBindings pi t
   let pi ← updateVars pi t
   match term2LamTermSCTPTP pi t {} with
   | .term _ t =>
@@ -1293,7 +1314,7 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
   match t with
   | Term.mk (Token.ident "inference") args =>
     if args.length < 3 then
-      throwError "parseInferenceRecord: expected at least three arguments"
+      throwError "{decl_name%}: expected at least three arguments"
     else
       let ruleTerm     := args[0]!
       let paramTerm    := args[1]!
@@ -1308,9 +1329,9 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
             if statusArg.toString = "thm" then
               args
             else
-              panic! s!"parseInferenceRecord: Expected status(thm) but got status({statusArg})"
-          | _ => panic! "parseInferenceRecord: Expected first element of paramTerm to be status(thm)"
-        | _ => panic! "parseInferenceRecord: Expected paramTerm to be a list (i.e. parsed from square brackets)"
+              panic! s!"{decl_name%}: Expected status(thm) but got status({statusArg})"
+          | _ => panic! "{decl_name%}: Expected first element of paramTerm to be status(thm)"
+        | _ => panic! "{decl_name%}: Expected paramTerm to be a list (i.e. parsed from square brackets)"
 
       let premises : List String :=
         match premisesTerm with
@@ -1318,14 +1339,14 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
           args.map fun arg =>
             match arg with
             | Term.mk (Token.ident s) _ => s
-            | _ => panic! s!"parseInferenceRecord: unexpected premises term format: {arg}"
+            | _ => panic! s!"{decl_name%}: unexpected premises term format: {arg}"
         | Term.mk (Token.ident s) _ => [s]
-        | _ => panic! s!"parseInferenceRecord: unexpected premises term format: {premisesTerm}"
+        | _ => panic! s!"{decl_name%}: unexpected premises term format: {premisesTerm}"
 
       let ruleName :=
         match ruleTerm with
         | Term.mk (Token.ident s) _ => s
-        | _ => panic! s!"parseInferenceRecord: unexpected rule term format: {ruleTerm}"
+        | _ => panic! s!"{decl_name%}: unexpected rule term format: {ruleTerm}"
 
       let rule : InferenceRule ←
         match ruleName with
@@ -1439,9 +1460,9 @@ def parseInferenceRecord (t : Term) (pi : ParsingInfo) : LamReif.ReifM (Inferenc
         | "res"                      => pure (res (parseNat params[0]!))
         | "instMult"                 => panic! "instMult not implemented"
 
-        | _ => panic! s!"parseInferenceRecord: unknown rule '{ruleName}'"
+        | _ => panic! s!"{decl_name%}: unknown rule '{ruleName}'"
       return (⟨rule, premises⟩, pi)
-  | _ => throwError "parseInferenceRecord: term is not an inference record"
+  | _ => throwError "{decl_name%}: term is not an inference record"
 
 
 structure ProofStep where
@@ -1479,19 +1500,21 @@ open Embedding.Lam in
 def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := do
   let lamVarTy := (← LamReif.getVarVal).map Prod.snd
   let lamEVarTy ← LamReif.getLamEVarTy
-  let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}, {}⟩
+  let mut pi : ParsingInfo := ⟨lamVarTy, lamEVarTy, {}, #[], {}⟩
   let mut ret := #[]
   trace[auto.tptp.printProof] "###########################################"
-  for ⟨cmd, args⟩ in cmds.reverse do
+  for ⟨cmd, args⟩ in cmds do
     match cmd with
     | "fof" =>
       trace[auto.tptp.printProof] "{decl_name%}: {cmd} {args}"
       match args with
+      | ⟨.ident name, []⟩ :: ⟨.ident "let", _⟩ :: sequent :: tail =>
+        pi := {pi with letBindings := pi.letBindings.insert ("$" ++ name) sequent}
       | ⟨.ident name, []⟩ :: ⟨.ident formulaKind, _⟩ :: sequent :: tail =>
         -- ### Reifing the inference record
         let infRec ← match formulaKind with
           | "axiom" => pure ⟨.hyp 0, []⟩
-          | "plain" => match tail with
+          | "plain" | "assumption" => match tail with
             | inferTerm :: [] =>
               let (infRec, piloc) ← parseInferenceRecord inferTerm pi
               pi := piloc
@@ -1539,7 +1562,7 @@ def getSCTPTPProof (cmds : Array Command) : LamReif.ReifM (Array ProofStep) := d
 
       | _ => continue
     | _ => throwError "{decl_name%} :: Unknown command {cmd}"
-  return ret.reverse
+  return ret
 
 
 #eval parse "fof(a0, axiom, (! [X0] : (X0 = app(t_a0, app(t_a0, app(t_a0, X0))))))."

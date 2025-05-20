@@ -1404,14 +1404,14 @@ example (f : Prop -> Prop) (a : Prop)
   egg
 
 example (α : Type) (f : α -> α) (a : α)
-  (h1 : ∀ x, x = (f (f (f ( f x)))))
-  (h2 : a =  f (f (f (f ( f a))))) :
+  (h1 : ∀ x, x = f (f (f (f x))))
+  (h2 : a =  f (f (f (f (f a))))) :
   a = f a := by
   egg
 
 example (α : Type) (f : α -> α) (a : α)
-  (h1 : ∀ x, (f (f (f ( f x)))) = x)
-  (h2 : a =  f (f (f (f ( f a))))) :
+  (h1 : ∀ x, f (f (f ( f x))) = x)
+  (h2 : a =  f (f (f (f (f a))))) :
   a = f a := by
   egg
 
@@ -1435,8 +1435,8 @@ example (α : Type) (f : α -> α)
   egg
 
 example (α : Type) (f : α -> α) (a : α)
-  (h1 : ∀ x, x = (f (f (f ( f x)))))
-  (h2 : a =  f (f (f (f ( f a))))) :
+  (h1 : ∀ x, x = f (f (f (f x))))
+  (h2 : a =  f (f (f (f (f a))))) :
   f a = a := by
   egg
 
@@ -1447,22 +1447,20 @@ example (α : Type) [Nonempty α] (d : α → Prop) :
   ∃ y : α, ∀ x : α, (d x → d y) := by
   goeland
 
-theorem buveurs (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
+example (α : Type) [Nonempty α] (P : α → Prop) : ∃ x, (P x → ∀ y, P y) := by
   goeland
 
-example (α : Type) [Nonempty α] (f : α -> α) (a : α)
-  (h1 : ∀ x, x = (f (f (f ( f x)))))
-  (h2 : a =  f (f (f (f ( f a))))) :
-  f a = a := by
+example (α : Type) (P Q : α → Prop) (a : α) :
+  ((∀ x, P x) ∨ (∀ y, Q y)) → (P a ∨ Q a) := by
   goeland
 
 
 -- # Prover9 examples
 
-example (α : Type) [Nonempty α] (P Q : α → Prop) (a : α) :
-  ((∀ y, Q y)) → (P a) := by
+example (α : Type) [Nonempty α] (d : α → Prop) :
+  ∃ y : α, ∀ x : α, (d x → d y) := by
   prover9
 
-example (α : Type) [Nonempty α] (P Q : α → Prop) (a : α) :
+example (α : Type) (P Q : α → Prop) (a : α) :
   ((∀ x, P x) ∨ (∀ y, Q y)) → (P a ∨ Q a) := by
   prover9

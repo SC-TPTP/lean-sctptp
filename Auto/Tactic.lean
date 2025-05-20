@@ -838,6 +838,7 @@ def instMultImpl (args : List (String × Expr)) (proofstep : ProofStep) : Tactic
         replaceMainGoal [mvarIdLoc]
 
 noncomputable def ClassicalChoice.{u} (α : Sort u) [inst : Nonempty α] := Classical.choice inst
+
 /--
   Setect metavariables that have not been yet assigned in (t : Expr), and assign them using Classical.choice
 -/
@@ -856,14 +857,9 @@ def assignMetaVars (t : Expr) : TacticM Unit := withMainContext do
       let newMainGoal ← currentMainGoal.assert mvarId.name type (mkConst mvarId.name)
       -- We then need to introduce the binding into the context.
       let (_fvar, newMainGoal) ← newMainGoal.intro1P
-      -- let expr ← mkAppOptM ``inferInstance #[type, .none]
       mvarId.assign (← mkAppOptM ``ClassicalChoice #[type, .none])
       replaceMainGoal [newMainGoal]
-      try
-        -- evalTactic (← `(tactic| apply Classical.choice inferInstance))
-        trace[auto.tptp.printProof] "Assigned metavariable {mvarId} using `Classical.choice`"
-      catch e =>
-        throwError "{decl_name%} :: Failed to assign metavariable {mvarId} using `Classical.choice`, probably because of a missing `Nonempty` instance.\nError: {e.toMessageData}"
+      trace[auto.tptp.printProof] "Assigned metavariable {mvarId} using `Classical.choice`"
 
 open Parser.TPTP in
 def leftExRcases (psName : Name) (premisesProofstep : Array ProofStep) (proofstep : ProofStep) : TacticM Unit := withMainContext do
@@ -1415,7 +1411,7 @@ example (α : Type) (f : α -> α) (a : α)
   a = f a := by
   egg
 
-theorem testiff (α : Type) (p : α -> Prop) (f : α -> α) (a : α)
+example (α : Type) (p : α -> Prop) (f : α -> α) (a : α)
   (h1 : ∀ x, p x ↔ p (f (f (f (f (f (f (f (f x)))))))))
   (h2 : ∀ x, p x ↔ p (f (f (f (f (f x)))))) :
   p (f a) ↔ p a := by

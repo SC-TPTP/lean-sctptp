@@ -12,4 +12,4 @@ lean_lib «Auto» {
 }
 
 require mathlib from git
-  "https://github.com/leanprover-community/mathlib4.git" @ "v4.15.0"
+  "https://github.com/leanprover-community/mathlib4.git" @ "v4.18.0"

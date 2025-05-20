@@ -282,7 +282,7 @@ def queryProver9Solver (query : String) : MetaM (Option (Array Parser.TPTP.Comma
   let executable := "java"
   let jarPath := auto.tptp.prover9.path.get (← getOptions)
   queryFileBasedSolver "prover9" executable
-    (fun problemFile solutionFile => #["-jar", jarPath, problemFile, solutionFile])
+    (fun problemFile solutionFile => #["-jar", jarPath, "p9", "--input", problemFile, "--output", solutionFile])
     (fun _ stderr proof => !(containsSubstr stderr "SEARCH FAILED") ∧ proof != "")
     query
 
